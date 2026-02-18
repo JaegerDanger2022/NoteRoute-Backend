@@ -12,10 +12,6 @@ firebase-admin==6.6.0
 # AWS
 boto3==1.35.71
 
-# Vector DB
-asyncpg==0.30.0
-pgvector==0.3.6
-
 # HTTP client (for LangGraph calls)
 httpx==0.28.1
 

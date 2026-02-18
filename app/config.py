@@ -16,14 +16,12 @@ class Settings(BaseSettings):
     FIREBASE_PROJECT_ID: str
     FIREBASE_SERVICE_ACCOUNT_JSON: str  # full JSON string as single env var
 
-    # Postgres (pgvector) — Railway injects this as DATABASE_URI
-    DATABASE_URI: str
-
     # AWS
     AWS_ACCESS_KEY_ID: str
     AWS_SECRET_ACCESS_KEY: str
     AWS_REGION: str = "us-east-1"
     AWS_TRANSCRIBE_BUCKET: str
+    AWS_VECTOR_BUCKET_NAME: str = "noteroute-vectors"
 
     # Bedrock models
     BEDROCK_EMBED_MODEL_ID: str = "amazon.titan-embed-text-v2:0"
