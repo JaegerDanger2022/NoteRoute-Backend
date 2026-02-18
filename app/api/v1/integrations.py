@@ -20,7 +20,7 @@ _GOOGLE_SCOPES = "https://www.googleapis.com/auth/documents https://www.googleap
 _SLACK_SCOPES = "channels:read,chat:write"
 
 
-@router.get("/{provider}/connect")
+@router.get("/{provider}/connect", response_model=None)
 async def connect_integration(
     provider: str,
     current_user: User = Depends(get_current_user),
