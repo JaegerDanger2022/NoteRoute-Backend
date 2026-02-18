@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NoteRoute Backend...")
     init_firebase()
     await init_db()
-    await pgvector_svc.init_pgvector(settings.POSTGRES_URL)
+    await pgvector_svc.init_pgvector(settings.DATABASE_URI)
     logger.info("Connected to MongoDB, Firebase, and pgvector")
     yield
     await pgvector_svc.close_pgvector()

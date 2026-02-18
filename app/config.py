@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     FIREBASE_PROJECT_ID: str
     FIREBASE_SERVICE_ACCOUNT_JSON: str  # full JSON string as single env var
 
-    # Postgres (pgvector)
-    POSTGRES_URL: str
+    # Postgres (pgvector) — Railway injects this as DATABASE_URI
+    DATABASE_URI: str
 
     # AWS
     AWS_ACCESS_KEY_ID: str
