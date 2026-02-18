@@ -29,7 +29,7 @@ def init_vector_store() -> None:
         try:
             _client.get_index(vectorBucketName=bucket, indexName=index_name)
         except ClientError as e:
-            if e.response["Error"]["Code"] in ("ResourceNotFoundException", "NoSuchKey"):
+            if e.response["Error"]["Code"] in ("NotFoundException", "ResourceNotFoundException", "NoSuchKey"):
                 _client.create_index(
                     vectorBucketName=bucket,
                     indexName=index_name,
