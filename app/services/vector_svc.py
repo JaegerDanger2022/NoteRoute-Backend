@@ -30,14 +30,19 @@ def init_vector_store() -> None:
             _client.get_index(vectorBucketName=bucket, indexName=index_name)
         except ClientError as e:
             if e.response["Error"]["Code"] in ("NotFoundException", "ResourceNotFoundException", "NoSuchKey"):
-                _client.create_index(
-                    vectorBucketName=bucket,
-                    indexName=index_name,
-                    dataType="float32",
-                    dimension=_DIMENSION,
-                    distanceMetric="cosine",
-                )
-                logger.info("Created S3 Vectors index: %s", index_name)
+                try:
+                    _client.create_index(
+                        vectorBucketName=bucket,
+                        indexName=index_name,
+                        dataType="float32",
+                        dimension=_DIMENSION,
+                        distanceMetric="cosine",
+                    )
+                    logger.info("Created S3 Vectors index: %s", index_name)
+                except ClientError as ce:
+                    if ce.response["Error"]["Code"] != "ConflictException":
+                        raise
+                    logger.info("S3 Vectors index already exists (race): %s", index_name)
             else:
                 raise
     logger.info("S3 Vectors initialized (bucket=%s)", bucket)
