@@ -13,6 +13,8 @@ except Exception as e:
     traceback.print_exc()
     sys.exit(1)
 
-print("Starting uvicorn...", flush=True)
+import os
+port = int(os.environ.get("PORT", 8000))
+print(f"Starting uvicorn on port {port}...", flush=True)
 import uvicorn
-uvicorn.run("app.main:app", host="0.0.0.0", port=8000, workers=2)
+uvicorn.run("app.main:app", host="0.0.0.0", port=port, workers=2)
