@@ -10,7 +10,7 @@ beanie==1.26.0
 firebase-admin==6.6.0
 
 # AWS
-boto3==1.35.71
+boto3==1.37.0
 
 # HTTP client (for LangGraph calls)
 httpx==0.28.1
