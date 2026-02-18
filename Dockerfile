@@ -1,4 +1,4 @@
-# build: 2026-02-18e
+# build: 2026-02-18f
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -11,8 +11,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
-COPY start.py .
 
 EXPOSE 8000
 
-CMD ["python", "start.py"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"]
