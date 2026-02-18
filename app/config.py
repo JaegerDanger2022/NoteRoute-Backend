@@ -35,10 +35,8 @@ class Settings(BaseSettings):
     # Internal service URLs
     LANGGRAPH_INTERNAL_URL: str = "http://noteroute-langgraph.railway.internal:8001"
 
-    # OAuth — Notion
-    NOTION_CLIENT_ID: str
-    NOTION_CLIENT_SECRET: str
-    NOTION_REDIRECT_URI: str
+    # Notion — internal integration token (replace with OAuth client ID/secret when going public)
+    NOTION_INTEGRATION_TOKEN: str
 
     # OAuth — Google
     GOOGLE_CLIENT_ID: str
