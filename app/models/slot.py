@@ -1,0 +1,34 @@
+from datetime import datetime, timezone
+from typing import Literal
+
+from beanie import Document, PydanticObjectId
+from pymongo import IndexModel, ASCENDING
+from pydantic import BaseModel, Field
+
+
+class SlotDestination(BaseModel):
+    integration_type: Literal["notion", "google_docs", "slack"]
+    resource_id: str
+    resource_name: str
+    resource_url: str | None = None
+
+
+class KnowledgeSlot(Document):
+    user_id: PydanticObjectId
+    name: str
+    description: str
+    content_sample: str = ""
+    destination: SlotDestination
+    pinecone_summary_id: str = ""
+    pinecone_content_id: str = ""
+    tags: list[str] = []
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    class Settings:
+        name = "knowledge_slots"
+        indexes = [
+            IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("user_id", ASCENDING), ("is_active", ASCENDING)]),
+        ]
