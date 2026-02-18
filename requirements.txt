@@ -32,5 +32,5 @@ slack-sdk==3.33.4
 
 # Testing
 pytest==8.3.4
-pytest-asyncio==0.25.0
+pytest-asyncio==0.25.1
 httpx==0.28.1
