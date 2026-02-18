@@ -9,7 +9,7 @@ from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.user import User
-from app.services import pgvector_svc
+from app.services import vector_svc
 from app.utils.embeddings import embed_text
 
 logger = logging.getLogger(__name__)
@@ -80,9 +80,9 @@ async def create_slot(
 
     try:
         summary_vec, content_vec = await _embed_slot(slot)
-        await pgvector_svc.upsert_slot(slot, summary_vec, content_vec)
+        vector_svc.upsert_slot(slot, summary_vec, content_vec)
     except Exception:
-        logger.exception("pgvector upsert failed for slot %s", slot.id)
+        logger.exception("vector upsert failed for slot %s", slot.id)
 
     return _slot_to_dict(slot)
 
@@ -128,9 +128,9 @@ async def update_slot(
 
     try:
         summary_vec, content_vec = await _embed_slot(slot)
-        await pgvector_svc.upsert_slot(slot, summary_vec, content_vec)
+        vector_svc.upsert_slot(slot, summary_vec, content_vec)
     except Exception:
-        logger.exception("pgvector upsert failed for slot %s", slot.id)
+        logger.exception("vector upsert failed for slot %s", slot.id)
 
     return _slot_to_dict(slot)
 
@@ -155,9 +155,9 @@ async def delete_slot(
     await current_user.save()
 
     try:
-        await pgvector_svc.delete_slot(str(slot.id), str(current_user.id))
+        vector_svc.delete_slot(str(slot.id))
     except Exception:
-        logger.exception("pgvector delete failed for slot %s", slot.id)
+        logger.exception("vector delete failed for slot %s", slot.id)
 
 
 async def _embed_slot(slot: KnowledgeSlot) -> tuple[list[float], list[float]]:
