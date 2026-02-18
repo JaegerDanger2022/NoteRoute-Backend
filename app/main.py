@@ -9,6 +9,7 @@ from app.core.exceptions import http_exception_handler
 from app.core.middleware import AuthMiddleware, RequestLoggingMiddleware
 from app.services.firebase import init_firebase
 from app.services.mongodb import close_db, init_db
+from app.services import pgvector_svc
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -19,8 +20,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NoteRoute Backend...")
     init_firebase()
     await init_db()
-    logger.info("Connected to MongoDB and Firebase")
+    await pgvector_svc.init_pgvector(settings.POSTGRES_URL)
+    logger.info("Connected to MongoDB, Firebase, and pgvector")
     yield
+    await pgvector_svc.close_pgvector()
     await close_db()
     logger.info("Shutdown complete")
 

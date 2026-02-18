@@ -19,8 +19,6 @@ class KnowledgeSlot(Document):
     description: str
     content_sample: str = ""
     destination: SlotDestination
-    pinecone_summary_id: str = ""
-    pinecone_content_id: str = ""
     tags: list[str] = []
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
@@ -8,6 +9,10 @@ from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.user import User
+from app.services import pgvector_svc
+from app.utils.embeddings import embed_text
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/slots", tags=["slots"])
 
@@ -70,11 +75,15 @@ async def create_slot(
     )
     await slot.insert()
 
-    # Update usage counter
     current_user.usage.slots_count += 1
     await current_user.save()
 
-    # TODO (Phase 2): trigger Pinecone upsert after embedding service is ready
+    try:
+        summary_vec, content_vec = await _embed_slot(slot)
+        await pgvector_svc.upsert_slot(slot, summary_vec, content_vec)
+    except Exception:
+        logger.exception("pgvector upsert failed for slot %s", slot.id)
+
     return _slot_to_dict(slot)
 
 
@@ -117,7 +126,12 @@ async def update_slot(
     slot.updated_at = datetime.now(timezone.utc)
     await slot.save()
 
-    # TODO (Phase 2): re-embed and upsert to Pinecone
+    try:
+        summary_vec, content_vec = await _embed_slot(slot)
+        await pgvector_svc.upsert_slot(slot, summary_vec, content_vec)
+    except Exception:
+        logger.exception("pgvector upsert failed for slot %s", slot.id)
+
     return _slot_to_dict(slot)
 
 
@@ -140,4 +154,23 @@ async def delete_slot(
     current_user.usage.slots_count = max(0, current_user.usage.slots_count - 1)
     await current_user.save()
 
-    # TODO (Phase 2): delete from Pinecone
+    try:
+        await pgvector_svc.delete_slot(str(slot.id), str(current_user.id))
+    except Exception:
+        logger.exception("pgvector delete failed for slot %s", slot.id)
+
+
+async def _embed_slot(slot: KnowledgeSlot) -> tuple[list[float], list[float]]:
+    summary_text = slot.description
+    content_text = slot.content_sample or slot.description
+    summary_vec, content_vec = await _embed_pair(summary_text, content_text)
+    return summary_vec, content_vec
+
+
+async def _embed_pair(summary_text: str, content_text: str) -> tuple[list[float], list[float]]:
+    import asyncio
+    summary_vec, content_vec = await asyncio.gather(
+        embed_text(summary_text),
+        embed_text(content_text),
+    )
+    return summary_vec, content_vec

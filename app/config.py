@@ -16,9 +16,8 @@ class Settings(BaseSettings):
     FIREBASE_PROJECT_ID: str
     FIREBASE_SERVICE_ACCOUNT_JSON: str  # full JSON string as single env var
 
-    # Pinecone
-    PINECONE_API_KEY: str
-    PINECONE_INDEX_NAME: str = "noteroute-slots"
+    # Postgres (pgvector)
+    POSTGRES_URL: str
 
     # AWS
     AWS_ACCESS_KEY_ID: str
