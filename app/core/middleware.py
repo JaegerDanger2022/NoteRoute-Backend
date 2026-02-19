@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 # Paths that don't require authentication
 _PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+# Path prefixes that don't require authentication (OAuth callbacks come from Google/Slack servers)
+_PUBLIC_PREFIXES = ("/api/v1/integrations/google/callback", "/api/v1/integrations/slack/callback")
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
@@ -46,7 +48,7 @@ class AuthMiddleware:
 
         request = Request(scope, receive, send)
 
-        if request.url.path in _PUBLIC_PATHS or request.method == "OPTIONS":
+        if request.url.path in _PUBLIC_PATHS or request.url.path.startswith(_PUBLIC_PREFIXES) or request.method == "OPTIONS":
             await self.app(scope, receive, send)
             return
 
