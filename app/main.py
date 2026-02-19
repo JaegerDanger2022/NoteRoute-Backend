@@ -22,8 +22,11 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NoteRoute Backend...")
     init_firebase()
     await init_db()
-    vector_svc.init_vector_store()
-    logger.info("Connected to MongoDB, Firebase, and S3 Vectors")
+    try:
+        vector_svc.init_vector_store()
+        logger.info("Connected to MongoDB, Firebase, and S3 Vectors")
+    except Exception:
+        logger.exception("S3 Vectors init failed — continuing without vector store")
     yield
     await close_db()
     logger.info("Shutdown complete")
