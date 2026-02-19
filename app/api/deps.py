@@ -1,4 +1,5 @@
 from fastapi import Request
+from pymongo.errors import DuplicateKeyError
 
 from app.models.user import User
 
@@ -10,6 +11,10 @@ async def get_current_user(request: Request) -> User:
 
     user = await User.find_one(User.firebase_uid == firebase_uid)
     if user is None:
-        user = User(firebase_uid=firebase_uid, email=firebase_email)
-        await user.insert()
+        try:
+            user = User(firebase_uid=firebase_uid, email=firebase_email)
+            await user.insert()
+        except DuplicateKeyError:
+            # Race condition: another request inserted first — fetch it
+            user = await User.find_one(User.firebase_uid == firebase_uid)
     return user
