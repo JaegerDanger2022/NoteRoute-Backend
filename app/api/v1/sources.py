@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError, TierLimitError
-from app.core.security import decrypt_token
+from app.core.security import decrypt_token, encrypt_token
 from app.models.integration import Integration
 from app.models.slot import KnowledgeSlot
 from app.models.source import Source
@@ -154,6 +154,26 @@ async def delete_source(
     await current_user.save()
 
 
+async def _get_fresh_google_token(integration: Integration) -> str:
+    """Return a valid Google access token, refreshing if expired or no expiry stored."""
+    from datetime import timezone
+    needs_refresh = True
+    if integration.tokens.expires_at:
+        from datetime import timedelta
+        buffer = integration.tokens.expires_at - __import__('datetime').datetime.now(timezone.utc)
+        needs_refresh = buffer.total_seconds() < 60  # refresh if < 60s left
+
+    if needs_refresh and integration.tokens.refresh_token:
+        refresh_token = decrypt_token(integration.tokens.refresh_token)
+        new_access, expires_at = await gdocs_svc.refresh_access_token(refresh_token)
+        integration.tokens.access_token = encrypt_token(new_access)
+        integration.tokens.expires_at = expires_at
+        await integration.save()
+        return new_access
+
+    return decrypt_token(integration.tokens.access_token)
+
+
 @router.get("/{source_id}/resources")
 async def list_resources(
     source_id: PydanticObjectId,
@@ -176,7 +196,10 @@ async def list_resources(
     if not integration:
         raise NotFoundError(f"No active {source.provider} integration found")
 
-    access_token = decrypt_token(integration.tokens.access_token)
+    if source.provider == "google":
+        access_token = await _get_fresh_google_token(integration)
+    else:
+        access_token = decrypt_token(integration.tokens.access_token)
 
     if source.provider == "notion":
         return await notion_svc.list_pages(access_token)

@@ -1,12 +1,36 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
+import httpx
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 _GDOCS_MIME = "application/vnd.google-apps.document"
+_GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+
+async def refresh_access_token(refresh_token: str) -> tuple[str, datetime]:
+    """Exchange a refresh token for a fresh access token. Returns (access_token, expires_at)."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            _GOOGLE_TOKEN_URL,
+            data={
+                "client_id": settings.GOOGLE_CLIENT_ID,
+                "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    expires_in = data.get("expires_in", 3600)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    return data["access_token"], expires_at
 
 
 def _build_drive(access_token: str):

@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.core.exceptions import NotFoundError
-from app.core.security import decrypt_token
+from app.core.security import decrypt_token, encrypt_token
 from app.models.integration import Integration
 from app.models.route import Route, RouteEvent
 from app.models.slot import KnowledgeSlot, SlotDestination
@@ -20,6 +20,28 @@ logger = logging.getLogger(__name__)
 
 # Internal endpoint — called by LangGraph, not authenticated via Firebase
 router = APIRouter(prefix="/deliver", tags=["deliver"])
+
+
+async def _get_access_token(integration: Integration) -> str:
+    """Return a valid access token, auto-refreshing Google tokens when expired."""
+    if integration.provider != "google" or not integration.tokens.refresh_token:
+        return decrypt_token(integration.tokens.access_token)
+
+    needs_refresh = True
+    if integration.tokens.expires_at:
+        from datetime import timedelta
+        remaining = integration.tokens.expires_at - datetime.now(timezone.utc)
+        needs_refresh = remaining.total_seconds() < 60
+
+    if needs_refresh:
+        refresh_token = decrypt_token(integration.tokens.refresh_token)
+        new_access, expires_at = await gdocs_svc.refresh_access_token(refresh_token)
+        integration.tokens.access_token = encrypt_token(new_access)
+        integration.tokens.expires_at = expires_at
+        await integration.save()
+        return new_access
+
+    return decrypt_token(integration.tokens.access_token)
 
 
 class DeliverRequest(BaseModel):
@@ -97,7 +119,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User) -> dic
     if not integration:
         raise NotFoundError(f"No active {source.provider} integration")
 
-    access_token = decrypt_token(integration.tokens.access_token)
+    access_token = await _get_access_token(integration)
 
     if source.provider == "notion":
         await notion_svc.append_block(slot.destination.resource_id, content, access_token)
@@ -139,7 +161,7 @@ async def _save_as_new_slot(
     if not integration:
         raise NotFoundError(f"No active {source.provider} integration")
 
-    access_token = decrypt_token(integration.tokens.access_token)
+    access_token = await _get_access_token(integration)
 
     # Title from summary (first 60 chars) or first line of content
     title = (summary or content)[:60].strip()

@@ -26,6 +26,10 @@ class ProcessStreamRequest(BaseModel):
     audio_duration_sec: float = 0.0
 
 
+class ProcessTextStreamRequest(BaseModel):
+    text: str
+
+
 class ConfirmRequest(BaseModel):
     run_id: str
     confirmed_slot_id: str | None = None
@@ -109,6 +113,60 @@ async def process_stream(
             async with client.stream(
                 "POST",
                 f"{settings.LANGGRAPH_INTERNAL_URL}/stream",
+                json=payload,
+            ) as response:
+                async for chunk in response.aiter_text():
+                    if chunk:
+                        yield chunk
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/text-stream")
+async def process_text_stream(
+    body: ProcessTextStreamRequest,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Start a streaming pipeline run from raw text (skips transcription)."""
+    if current_user.usage.routes_this_month >= current_user.limits.max_routes_per_month:
+        raise RateLimitError()
+
+    if not current_user.active_source_id:
+        raise NotFoundError("No active source selected. Select a source before submitting.")
+
+    run_id = str(uuid.uuid4())
+
+    route = Route(
+        user_id=current_user.id,
+        run_id=run_id,
+        audio_s3_key="",
+        status="processing",
+    )
+    await route.insert()
+
+    current_user.usage.routes_this_month += 1
+    await current_user.save()
+
+    payload = {
+        "run_id": run_id,
+        "user_id": str(current_user.id),
+        "text": body.text,
+        "source_id": str(current_user.active_source_id),
+    }
+
+    async def _stream():
+        yield f"data: {{'run_id': '{run_id}', 'node': 'init'}}\n\n"
+        async with httpx.AsyncClient(timeout=None) as client:
+            async with client.stream(
+                "POST",
+                f"{settings.LANGGRAPH_INTERNAL_URL}/stream/text",
                 json=payload,
             ) as response:
                 async for chunk in response.aiter_text():
