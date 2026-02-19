@@ -20,10 +20,14 @@ _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _SLACK_AUTH_URL = "https://slack.com/oauth/v2/authorize"
 _SLACK_TOKEN_URL = "https://slack.com/api/oauth.v2.access"
 
-_GOOGLE_SCOPES = (
-    "https://www.googleapis.com/auth/documents "
-    "https://www.googleapis.com/auth/drive.readonly"
+# Phase 1: read-only — shown at connect time (no scary permissions)
+_GOOGLE_CONNECT_SCOPES = (
+    "https://www.googleapis.com/auth/drive.readonly "
+    "https://www.googleapis.com/auth/userinfo.email"
 )
+# Phase 2: write — requested only when user first delivers a note
+_GOOGLE_WRITE_SCOPE = "https://www.googleapis.com/auth/documents"
+
 _SLACK_SCOPES = "channels:read,chat:write"
 
 
@@ -36,6 +40,8 @@ async def connect_integration(
 
     For Notion: connects immediately and returns status.
     For Google/Slack: returns the OAuth URL for the client to open in a browser.
+    Google connect requests read-only scopes only; write access is requested
+    incrementally before the first delivery.
     """
     state = str(current_user.id)
 
@@ -48,9 +54,9 @@ async def connect_integration(
             f"{_GOOGLE_AUTH_URL}"
             f"?client_id={settings.GOOGLE_CLIENT_ID}"
             f"&response_type=code"
-            f"&scope={_GOOGLE_SCOPES}"
+            f"&scope={_GOOGLE_CONNECT_SCOPES}"
             f"&access_type=offline"
-            f"&prompt=consent"
+            f"&include_granted_scopes=true"
             f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
             f"&state={state}"
         )
@@ -70,9 +76,60 @@ async def connect_integration(
         raise NotFoundError(f"Unknown provider: {provider}")
 
 
+@router.get("/google/upgrade-write")
+async def upgrade_google_write(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return an OAuth URL that adds the documents (write) scope incrementally.
+
+    Google merges this with already-granted scopes so the user only sees
+    the new permission on the consent screen.
+    """
+    integration = await Integration.find_one(
+        Integration.user_id == current_user.id,
+        Integration.provider == "google",
+        Integration.is_active == True,
+    )
+    state = str(current_user.id)
+    login_hint = integration.provider_email if integration else None
+
+    url = (
+        f"{_GOOGLE_AUTH_URL}"
+        f"?client_id={settings.GOOGLE_CLIENT_ID}"
+        f"&response_type=code"
+        f"&scope={_GOOGLE_WRITE_SCOPE}"
+        f"&access_type=offline"
+        f"&include_granted_scopes=true"
+        f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
+        f"&state={state}__upgrade"
+    )
+    if login_hint:
+        url += f"&login_hint={login_hint}"
+
+    return {"status": "redirect", "url": url}
+
+
+@router.get("/google/has-write")
+async def google_has_write(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Check whether the user has granted the documents (write) scope."""
+    integration = await Integration.find_one(
+        Integration.user_id == current_user.id,
+        Integration.provider == "google",
+        Integration.is_active == True,
+    )
+    if not integration:
+        return {"has_write": False}
+    has_write = _GOOGLE_WRITE_SCOPE in integration.tokens.scopes
+    return {"has_write": has_write}
+
+
 @router.get("/{provider}/callback", response_model=None)
 async def oauth_callback(provider: str, code: str, state: str) -> RedirectResponse:
     """Handle OAuth callback — exchange code for tokens, store encrypted, redirect to app."""
+    is_upgrade = state.endswith("__upgrade")
+
     if provider == "google":
         await _handle_google_callback(code, state)
     elif provider == "slack":
@@ -80,10 +137,11 @@ async def oauth_callback(provider: str, code: str, state: str) -> RedirectRespon
     else:
         raise NotFoundError(f"Unknown provider: {provider}")
 
-    return RedirectResponse(
-        url=f"noteroute://oauth/success?provider={provider}",
-        status_code=302,
-    )
+    deep_link = f"noteroute://oauth/success?provider={provider}"
+    if is_upgrade:
+        deep_link += "&scope_upgrade=true"
+
+    return RedirectResponse(url=deep_link, status_code=302)
 
 
 @router.get("")
@@ -175,6 +233,9 @@ async def _store_notion_internal(user: User) -> None:
 
 async def _handle_google_callback(code: str, state: str) -> None:
     """Exchange Google auth code for tokens, store, upsert Source."""
+    # Strip upgrade suffix before using state as a user_id
+    raw_user_id = state.removesuffix("__upgrade")
+
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
             _GOOGLE_TOKEN_URL,
@@ -191,6 +252,8 @@ async def _handle_google_callback(code: str, state: str) -> None:
 
         access_token = tokens["access_token"]
         refresh_token = tokens.get("refresh_token")
+        # Parse and store all granted scopes from the token response
+        granted_scopes = tokens.get("scope", "").split()
 
         profile_resp = await client.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
@@ -202,7 +265,7 @@ async def _handle_google_callback(code: str, state: str) -> None:
     provider_email = profile.get("email")
     display_name = profile.get("name", "Google Account")
 
-    user_id = PydanticObjectId(state)
+    user_id = PydanticObjectId(raw_user_id)
     user = await User.get(user_id)
     if not user:
         return
@@ -218,6 +281,8 @@ async def _handle_google_callback(code: str, state: str) -> None:
         existing.tokens.access_token = encrypted_access
         if encrypted_refresh:
             existing.tokens.refresh_token = encrypted_refresh
+        # Merge new scopes with any previously granted ones
+        existing.tokens.scopes = list(set(existing.tokens.scopes) | set(granted_scopes))
         existing.provider_email = provider_email
         existing.is_active = True
         await existing.save()
@@ -228,6 +293,7 @@ async def _handle_google_callback(code: str, state: str) -> None:
             tokens=OAuthTokens(
                 access_token=encrypted_access,
                 refresh_token=encrypted_refresh,
+                scopes=granted_scopes,
             ),
             provider_user_id=provider_user_id,
             provider_email=provider_email,
