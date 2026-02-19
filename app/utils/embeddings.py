@@ -22,7 +22,7 @@ def _get_client():
 
 def _invoke_embedding(text: str) -> list[float]:
     client = _get_client()
-    body = json.dumps({"inputText": text})
+    body = json.dumps({"inputText": text, "dimensions": 1024, "normalize": True})
     response = client.invoke_model(
         modelId=settings.BEDROCK_EMBED_MODEL_ID,
         contentType="application/json",
@@ -34,5 +34,5 @@ def _invoke_embedding(text: str) -> list[float]:
 
 
 async def embed_text(text: str) -> list[float]:
-    """Generate a 1536-dim embedding vector via AWS Bedrock Titan Text Embeddings V2."""
+    """Generate a 1024-dim embedding vector via AWS Bedrock Titan Text Embeddings V2."""
     return await asyncio.to_thread(_invoke_embedding, text)

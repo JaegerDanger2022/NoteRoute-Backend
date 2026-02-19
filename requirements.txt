@@ -10,7 +10,10 @@ beanie==1.26.0
 firebase-admin==6.6.0
 
 # AWS
-boto3==1.39.5
+boto3>=1.26.0
+
+# Vector store
+pinecone==6.0.0
 
 # HTTP client (for LangGraph calls)
 httpx==0.28.1
