@@ -159,9 +159,10 @@ async def _get_fresh_google_token(integration: Integration) -> str:
     from datetime import timezone
     needs_refresh = True
     if integration.tokens.expires_at:
-        from datetime import timedelta
-        buffer = integration.tokens.expires_at - __import__('datetime').datetime.now(timezone.utc)
-        needs_refresh = buffer.total_seconds() < 60  # refresh if < 60s left
+        expires = integration.tokens.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        needs_refresh = (expires - datetime.now(timezone.utc)).total_seconds() < 60
 
     if needs_refresh and integration.tokens.refresh_token:
         refresh_token = decrypt_token(integration.tokens.refresh_token)

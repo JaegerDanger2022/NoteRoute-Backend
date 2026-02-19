@@ -29,9 +29,10 @@ async def _get_access_token(integration: Integration) -> str:
 
     needs_refresh = True
     if integration.tokens.expires_at:
-        from datetime import timedelta
-        remaining = integration.tokens.expires_at - datetime.now(timezone.utc)
-        needs_refresh = remaining.total_seconds() < 60
+        expires = integration.tokens.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        needs_refresh = (expires - datetime.now(timezone.utc)).total_seconds() < 60
 
     if needs_refresh:
         refresh_token = decrypt_token(integration.tokens.refresh_token)
