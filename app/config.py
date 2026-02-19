@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     AWS_VECTOR_BUCKET_NAME: str = "noteroute-vectors"
 
     # Bedrock models
-    BEDROCK_EMBED_MODEL_ID: str = "amazon.titan-embed-text-v2:0"
+    BEDROCK_EMBED_MODEL_ID: str = "amazon.titan-embed-text-v1:0"
     CLAUDE_MODEL_ID: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
     # Encryption (Fernet key for OAuth token storage)
