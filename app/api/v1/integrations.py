@@ -31,8 +31,12 @@ _SLACK_SCOPES = "channels:read,chat:write"
 async def connect_integration(
     provider: str,
     current_user: User = Depends(get_current_user),
-) -> dict | RedirectResponse:
-    """Initiate connection to a provider."""
+) -> dict:
+    """Initiate connection to a provider.
+
+    For Notion: connects immediately and returns status.
+    For Google/Slack: returns the OAuth URL for the client to open in a browser.
+    """
     state = str(current_user.id)
 
     if provider == "notion":
@@ -50,7 +54,7 @@ async def connect_integration(
             f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
             f"&state={state}"
         )
-        return RedirectResponse(url=url)
+        return {"status": "redirect", "provider": "google", "url": url}
 
     elif provider == "slack":
         url = (
@@ -60,7 +64,7 @@ async def connect_integration(
             f"&redirect_uri={settings.SLACK_REDIRECT_URI}"
             f"&state={state}"
         )
-        return RedirectResponse(url=url)
+        return {"status": "redirect", "provider": "slack", "url": url}
 
     else:
         raise NotFoundError(f"Unknown provider: {provider}")
