@@ -29,22 +29,21 @@ def init_vector_store() -> None:
         try:
             _client.get_index(vectorBucketName=bucket, indexName=index_name)
         except ClientError as e:
-            if e.response["Error"]["Code"] in ("NotFoundException", "ResourceNotFoundException", "NoSuchKey"):
-                try:
-                    _client.create_index(
-                        vectorBucketName=bucket,
-                        indexName=index_name,
-                        dataType="float32",
-                        dimension=_DIMENSION,
-                        distanceMetric="cosine",
-                    )
-                    logger.info("Created S3 Vectors index: %s", index_name)
-                except ClientError as ce:
-                    if ce.response["Error"]["Code"] != "ConflictException":
-                        raise
-                    logger.info("S3 Vectors index already exists (race): %s", index_name)
-            else:
-                raise
+            code = e.response["Error"]["Code"]
+            logger.info("get_index(%s) -> %s, attempting create", index_name, code)
+            try:
+                _client.create_index(
+                    vectorBucketName=bucket,
+                    indexName=index_name,
+                    dataType="float32",
+                    dimension=_DIMENSION,
+                    distanceMetric="cosine",
+                )
+                logger.info("Created S3 Vectors index: %s", index_name)
+            except ClientError as ce:
+                if ce.response["Error"]["Code"] not in ("ConflictException", "ResourceConflictException"):
+                    raise
+                logger.info("S3 Vectors index already exists: %s", index_name)
     logger.info("S3 Vectors initialized (bucket=%s)", bucket)
 
 
@@ -136,5 +135,5 @@ def delete_slot(slot_id: str) -> None:
                 keys=[slot_id],
             )
         except ClientError as e:
-            if e.response["Error"]["Code"] != "ResourceNotFoundException":
+            if e.response["Error"]["Code"] not in ("ResourceNotFoundException", "NotFoundException"):
                 raise
