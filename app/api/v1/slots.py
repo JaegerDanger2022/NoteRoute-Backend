@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
@@ -11,7 +11,7 @@ from app.core.exceptions import NotFoundError, TierLimitError
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
-from app.services import vector_svc
+from app.services import claude_svc, vector_svc
 from app.utils.embeddings import embed_text
 
 logger = logging.getLogger(__name__)
@@ -63,9 +63,33 @@ async def list_slots(
     return [_slot_to_dict(s) for s in slots]
 
 
+async def _enrich_slot(slot_id: str, source_name: str, provider: str, user_provided_description: bool, user_provided_tags: bool) -> None:
+    """Background task: use Claude Haiku to infer description + tags, then re-embed."""
+    slot = await KnowledgeSlot.get(PydanticObjectId(slot_id))
+    if not slot:
+        return
+    try:
+        meta = await claude_svc.infer_slot_metadata(slot.name, source_name, provider)
+        changed = False
+        if not user_provided_description and meta["description"]:
+            slot.description = meta["description"]
+            changed = True
+        if not user_provided_tags and meta["tags"]:
+            slot.tags = meta["tags"]
+            changed = True
+        if changed:
+            await slot.save()
+            source = await Source.get(slot.source_id)
+            summary_vec, content_vec = await _embed_slot(slot, source)
+            vector_svc.upsert_slot(slot, summary_vec, content_vec)
+    except Exception:
+        logger.exception("Auto-enrich failed for slot %s", slot_id)
+
+
 @router.post("", status_code=201)
 async def create_slot(
     body: SlotCreateRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ) -> dict:
     if current_user.usage.slots_count >= current_user.limits.max_slots:
@@ -101,6 +125,19 @@ async def create_slot(
         vector_svc.upsert_slot(slot, summary_vec, content_vec)
     except Exception:
         logger.exception("vector upsert failed for slot %s", slot.id)
+
+    # Auto-enrich description/tags in background if user left them blank
+    user_provided_description = bool(body.description and body.description.strip() and body.description.strip() != body.name.strip())
+    user_provided_tags = bool(body.tags)
+    if not user_provided_description or not user_provided_tags:
+        background_tasks.add_task(
+            _enrich_slot,
+            str(slot.id),
+            source.name,
+            source.provider,
+            user_provided_description,
+            user_provided_tags,
+        )
 
     return _slot_to_dict(slot)
 
