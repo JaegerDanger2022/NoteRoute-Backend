@@ -64,7 +64,13 @@ Rules:
     result = json.loads(response["body"].read())
     text = result["content"][0]["text"].strip()
 
-    # Parse JSON from response
+    # Strip markdown code fences if present
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+
     parsed = json.loads(text)
     return {
         "description": str(parsed.get("description", "")).strip(),

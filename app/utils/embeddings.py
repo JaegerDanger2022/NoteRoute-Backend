@@ -22,7 +22,7 @@ def _get_client():
 
 def _invoke_embedding(text: str) -> list[float]:
     client = _get_client()
-    body = json.dumps({"inputText": text, "dimensions": 1536, "normalize": True})
+    body = json.dumps({"inputText": text, "outputEmbeddingLength": 1536})
     response = client.invoke_model(
         modelId=settings.BEDROCK_EMBED_MODEL_ID,
         contentType="application/json",
