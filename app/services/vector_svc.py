@@ -62,8 +62,10 @@ def upsert_slot(
     client = _get_client()
     bucket = settings.AWS_VECTOR_BUCKET_NAME
     slot_id = str(slot.id)
-    user_id = str(slot.user_id)
-    metadata = {"user_id": user_id, "slot_type": slot.slot_type}
+    metadata = {
+        "user_id": str(slot.user_id),
+        "source_id": str(slot.source_id),
+    }
 
     client.put_vectors(
         vectorBucketName=bucket,
@@ -81,17 +83,24 @@ def search_slots(
     summary_query_vec: list[float],
     content_query_vec: list[float],
     user_id: str,
+    source_id: str,
     top_k: int = 10,
 ) -> list[dict]:
     client = _get_client()
     bucket = settings.AWS_VECTOR_BUCKET_NAME
+    metadata_filter = {
+        "metadata": {
+            "user_id": {"$eq": user_id},
+            "source_id": {"$eq": source_id},
+        }
+    }
 
     summary_resp = client.query_vectors(
         vectorBucketName=bucket,
         indexName=_INDEX_SUMMARY,
         queryVector={"float32": summary_query_vec},
         topK=top_k,
-        filter={"metadata": {"user_id": {"$eq": user_id}}},
+        filter=metadata_filter,
         returnDistance=True,
     )
     content_resp = client.query_vectors(
@@ -99,7 +108,7 @@ def search_slots(
         indexName=_INDEX_CONTENT,
         queryVector={"float32": content_query_vec},
         topK=top_k,
-        filter={"metadata": {"user_id": {"$eq": user_id}}},
+        filter=metadata_filter,
         returnDistance=True,
     )
 

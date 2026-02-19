@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import Literal
 
 from beanie import Document, PydanticObjectId
 from pymongo import IndexModel, ASCENDING
@@ -7,7 +6,6 @@ from pydantic import BaseModel, Field
 
 
 class SlotDestination(BaseModel):
-    integration_type: Literal["notion", "google_docs", "slack"]
     resource_id: str
     resource_name: str
     resource_url: str | None = None
@@ -15,6 +13,7 @@ class SlotDestination(BaseModel):
 
 class KnowledgeSlot(Document):
     user_id: PydanticObjectId
+    source_id: PydanticObjectId
     name: str
     description: str
     content_sample: str = ""
@@ -28,5 +27,7 @@ class KnowledgeSlot(Document):
         name = "knowledge_slots"
         indexes = [
             IndexModel([("user_id", ASCENDING)]),
+            IndexModel([("source_id", ASCENDING)]),
             IndexModel([("user_id", ASCENDING), ("is_active", ASCENDING)]),
+            IndexModel([("source_id", ASCENDING), ("is_active", ASCENDING)]),
         ]

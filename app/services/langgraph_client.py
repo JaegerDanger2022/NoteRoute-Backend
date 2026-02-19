@@ -8,6 +8,7 @@ async def run_pipeline(
     user_id: str,
     audio_s3_key: str,
     audio_duration_sec: float,
+    source_id: str | None = None,
 ) -> dict:
     """Send a pipeline request to the LangGraph service and return its response."""
     payload = {
@@ -15,6 +16,7 @@ async def run_pipeline(
         "user_id": user_id,
         "audio_s3_key": audio_s3_key,
         "audio_duration_sec": audio_duration_sec,
+        "source_id": source_id,
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(

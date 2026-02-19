@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -8,6 +9,7 @@ from pydantic import BaseModel
 from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.models.slot import KnowledgeSlot, SlotDestination
+from app.models.source import Source
 from app.models.user import User
 from app.services import vector_svc
 from app.utils.embeddings import embed_text
@@ -18,6 +20,7 @@ router = APIRouter(prefix="/slots", tags=["slots"])
 
 
 class SlotCreateRequest(BaseModel):
+    source_id: str
     name: str
     description: str
     content_sample: str = ""
@@ -26,6 +29,7 @@ class SlotCreateRequest(BaseModel):
 
 
 class SlotUpdateRequest(BaseModel):
+    source_id: str | None = None
     name: str | None = None
     description: str | None = None
     content_sample: str | None = None
@@ -35,6 +39,7 @@ class SlotUpdateRequest(BaseModel):
 def _slot_to_dict(slot: KnowledgeSlot) -> dict:
     return {
         "id": str(slot.id),
+        "source_id": str(slot.source_id),
         "name": slot.name,
         "description": slot.description,
         "content_sample": slot.content_sample,
@@ -47,11 +52,14 @@ def _slot_to_dict(slot: KnowledgeSlot) -> dict:
 
 
 @router.get("")
-async def list_slots(current_user: User = Depends(get_current_user)) -> list[dict]:
-    slots = await KnowledgeSlot.find(
-        KnowledgeSlot.user_id == current_user.id,
-        KnowledgeSlot.is_active == True,
-    ).to_list()
+async def list_slots(
+    source_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    query = [KnowledgeSlot.user_id == current_user.id, KnowledgeSlot.is_active == True]
+    if source_id:
+        query.append(KnowledgeSlot.source_id == PydanticObjectId(source_id))
+    slots = await KnowledgeSlot.find(*query).to_list()
     return [_slot_to_dict(s) for s in slots]
 
 
@@ -65,8 +73,18 @@ async def create_slot(
             f"Slot limit reached ({current_user.limits.max_slots}). Upgrade your plan."
         )
 
+    source_id = PydanticObjectId(body.source_id)
+    source = await Source.find_one(
+        Source.id == source_id,
+        Source.user_id == current_user.id,
+        Source.is_active == True,
+    )
+    if not source:
+        raise NotFoundError("Source not found")
+
     slot = KnowledgeSlot(
         user_id=current_user.id,
+        source_id=source_id,
         name=body.name,
         description=body.description,
         content_sample=body.content_sample,
@@ -79,7 +97,7 @@ async def create_slot(
     await current_user.save()
 
     try:
-        summary_vec, content_vec = await _embed_slot(slot)
+        summary_vec, content_vec = await _embed_slot(slot, source)
         vector_svc.upsert_slot(slot, summary_vec, content_vec)
     except Exception:
         logger.exception("vector upsert failed for slot %s", slot.id)
@@ -114,6 +132,16 @@ async def update_slot(
     if not slot:
         raise NotFoundError("Slot not found")
 
+    if body.source_id is not None:
+        new_source_id = PydanticObjectId(body.source_id)
+        source = await Source.find_one(
+            Source.id == new_source_id,
+            Source.user_id == current_user.id,
+            Source.is_active == True,
+        )
+        if not source:
+            raise NotFoundError("Source not found")
+        slot.source_id = new_source_id
     if body.name is not None:
         slot.name = body.name
     if body.description is not None:
@@ -127,7 +155,8 @@ async def update_slot(
     await slot.save()
 
     try:
-        summary_vec, content_vec = await _embed_slot(slot)
+        source = await Source.get(slot.source_id)
+        summary_vec, content_vec = await _embed_slot(slot, source)
         vector_svc.upsert_slot(slot, summary_vec, content_vec)
     except Exception:
         logger.exception("vector upsert failed for slot %s", slot.id)
@@ -160,15 +189,16 @@ async def delete_slot(
         logger.exception("vector delete failed for slot %s", slot.id)
 
 
-async def _embed_slot(slot: KnowledgeSlot) -> tuple[list[float], list[float]]:
-    summary_text = slot.description
-    content_text = slot.content_sample or slot.description
-    summary_vec, content_vec = await _embed_pair(summary_text, content_text)
-    return summary_vec, content_vec
+async def _embed_slot(slot: KnowledgeSlot, source: Source | None = None) -> tuple[list[float], list[float]]:
+    # Include source context in the embedding text for better routing
+    source_context = ""
+    if source:
+        tags_str = " ".join(source.tags) if source.tags else ""
+        source_context = f"{source.name} {source.provider} {tags_str} | "
 
+    summary_text = source_context + slot.description
+    content_text = source_context + (slot.content_sample or slot.description)
 
-async def _embed_pair(summary_text: str, content_text: str) -> tuple[list[float], list[float]]:
-    import asyncio
     summary_vec, content_vec = await asyncio.gather(
         embed_text(summary_text),
         embed_text(content_text),

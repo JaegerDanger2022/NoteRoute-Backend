@@ -11,13 +11,14 @@ async def init_db() -> None:
     _client = AsyncIOMotorClient(settings.MONGODB_URL)
     # Import here to avoid circular imports at module load time
     from app.models.user import User
+    from app.models.source import Source
     from app.models.slot import KnowledgeSlot
     from app.models.route import Route
     from app.models.integration import Integration
 
     await init_beanie(
         database=_client[settings.MONGODB_DB_NAME],
-        document_models=[User, KnowledgeSlot, Route, Integration],
+        document_models=[User, Source, KnowledgeSlot, Route, Integration],
     )
 
 
