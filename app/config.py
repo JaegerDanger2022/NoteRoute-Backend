@@ -28,23 +28,23 @@ class Settings(BaseSettings):
     CLAUDE_MODEL_ID: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 
     # Encryption (Fernet key for OAuth token storage)
-    ENCRYPTION_KEY: str
+    ENCRYPTION_KEY: str = ""
 
     # Internal service URLs
     LANGGRAPH_INTERNAL_URL: str = "http://noteroute-langgraph.railway.internal:8001"
 
     # Notion — internal integration token (replace with OAuth client ID/secret when going public)
-    NOTION_INTEGRATION_TOKEN: str
+    NOTION_INTEGRATION_TOKEN: str = ""
 
     # OAuth — Google
-    GOOGLE_CLIENT_ID: str
-    GOOGLE_CLIENT_SECRET: str
-    GOOGLE_REDIRECT_URI: str
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = ""
 
     # OAuth — Slack
-    SLACK_CLIENT_ID: str
-    SLACK_CLIENT_SECRET: str
-    SLACK_REDIRECT_URI: str
+    SLACK_CLIENT_ID: str = ""
+    SLACK_CLIENT_SECRET: str = ""
+    SLACK_REDIRECT_URI: str = ""
 
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:8081"
