@@ -1,7 +1,9 @@
 import logging
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -48,6 +50,23 @@ app.add_middleware(AuthMiddleware)
 
 # Exception handlers
 app.add_exception_handler(HTTPException, http_exception_handler)
+
+
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "Unhandled exception on %s %s: %s\n%s",
+        request.method,
+        request.url.path,
+        exc,
+        traceback.format_exc(),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error", "detail": str(exc)},
+    )
+
+
+app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 # Routers
 from app.api.v1.router import router as v1_router
