@@ -135,11 +135,36 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
     integration.last_used_at = datetime.now(timezone.utc)
     await integration.save()
 
+    # Re-index slot in background — doesn't block delivery response
+    asyncio.create_task(_reindex_slot(slot, source, content))
+
     return {
         "slot_id": slot_id,
         "slot_name": slot.name,
         "provider": source.provider,
     }
+
+
+async def _reindex_slot(slot: KnowledgeSlot, source: Source, new_content: str) -> None:
+    """Append delivered content to slot's content_sample and upsert Pinecone vectors."""
+    try:
+        # Rolling content_sample: keep last 1000 chars + new content (max 500 chars)
+        combined = (slot.content_sample + "\n" + new_content[:500]).strip()
+        slot.content_sample = combined[-1000:]
+        slot.updated_at = datetime.now(timezone.utc)
+        await slot.save()
+
+        # Re-embed with updated content; summary vector uses description (stable)
+        tags_str = " ".join(source.tags) if source.tags else ""
+        source_context = f"{source.name} {source.provider} {tags_str} | "
+        summary_vec, content_vec = await asyncio.gather(
+            embed_text(source_context + slot.description),
+            embed_text(source_context + slot.content_sample),
+        )
+        vector_svc.upsert_slot(slot, summary_vec, content_vec)
+        logger.info("Re-indexed slot %s after delivery", slot.id)
+    except Exception:
+        logger.exception("Background re-index failed for slot %s", slot.id)
 
 
 async def _save_as_new_slot(
