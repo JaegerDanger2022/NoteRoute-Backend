@@ -30,9 +30,15 @@ def _route_to_dict(route: Route, slot_name: str | None = None) -> dict:
     }
 
 
+_TERMINAL_STATUSES = {"delivered", "failed", "rejected"}
+
+
 @router.get("")
 async def list_routes(current_user: User = Depends(get_current_user)) -> list[dict]:
-    routes = await Route.find(Route.user_id == current_user.id).sort("-created_at").limit(50).to_list()
+    routes = await Route.find(
+        Route.user_id == current_user.id,
+        {"status": {"$in": list(_TERMINAL_STATUSES)}},
+    ).sort("-created_at").limit(50).to_list()
 
     # Batch-fetch slot names for routes that have a confirmed slot
     slot_ids = [r.confirmed_slot_id for r in routes if r.confirmed_slot_id]
