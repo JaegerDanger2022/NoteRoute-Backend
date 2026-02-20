@@ -20,7 +20,7 @@ async def run_pipeline(
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
-            f"{settings.LANGGRAPH_INTERNAL_URL}/run",
+            f"{settings.langgraph_url}/run",
             json=payload,
         )
         response.raise_for_status()

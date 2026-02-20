@@ -113,7 +113,7 @@ async def process_stream(
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "POST",
-                f"{settings.LANGGRAPH_INTERNAL_URL}/stream",
+                f"{settings.langgraph_url}/stream",
                 json=payload,
             ) as response:
                 async for chunk in response.aiter_text():
@@ -167,7 +167,7 @@ async def process_text_stream(
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "POST",
-                f"{settings.LANGGRAPH_INTERNAL_URL}/stream/text",
+                f"{settings.langgraph_url}/stream/text",
                 json=payload,
             ) as response:
                 async for chunk in response.aiter_text():
@@ -200,7 +200,7 @@ async def confirm_slot(
     # Forward to LangGraph to resume the interrupted graph
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
-            f"{settings.LANGGRAPH_INTERNAL_URL}/confirm",
+            f"{settings.langgraph_url}/confirm",
             json={
                 "run_id": body.run_id,
                 "confirmed_slot_id": body.confirmed_slot_id,

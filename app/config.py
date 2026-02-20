@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Bedrock models
     BEDROCK_EMBED_MODEL_ID: str = "amazon.titan-embed-text-v2:0"
-    CLAUDE_MODEL_ID: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    CLAUDE_MODEL_ID: str = "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
 
     # Pinecone
     PINECONE_API_KEY: str
@@ -33,8 +33,13 @@ class Settings(BaseSettings):
     # Encryption (Fernet key for OAuth token storage)
     ENCRYPTION_KEY: str = ""
 
-    # Internal service URLs
+    # Internal service URLs — must NOT have a trailing slash
     LANGGRAPH_INTERNAL_URL: str = "http://noteroute-langgraph.railway.internal:8001"
+
+    @property
+    def langgraph_url(self) -> str:
+        """Return LANGGRAPH_INTERNAL_URL with any trailing slash stripped."""
+        return self.LANGGRAPH_INTERNAL_URL.rstrip("/")
 
     # Notion — internal integration token (replace with OAuth client ID/secret when going public)
     NOTION_INTEGRATION_TOKEN: str = ""
