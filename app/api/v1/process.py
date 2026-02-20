@@ -182,7 +182,7 @@ async def confirm_slot(
         raise NotFoundError("Route not found")
 
     # Forward to LangGraph to resume the interrupted graph
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             f"{settings.langgraph_url}/confirm",
             json={
@@ -193,6 +193,9 @@ async def confirm_slot(
             },
         )
         resp.raise_for_status()
+        lg_result = resp.json()
+
+    delivery_status = lg_result.get("status", "unknown")
 
     # Update route record
     if body.confirmed_slot_id:
@@ -200,14 +203,20 @@ async def confirm_slot(
         route.confirmed_slot_id = PydanticObjectId(body.confirmed_slot_id)
     if body.transcript:
         route.transcript = body.transcript
-    route.status = "processing"
+    route.status = delivery_status
     route.events.append(RouteEvent(
         event_type="confirmed",
         metadata={
             "confirmed_slot_id": body.confirmed_slot_id,
             "save_as_slot": body.save_as_slot,
+            "delivery_status": delivery_status,
         },
     ))
     await route.save()
 
-    return {"status": "confirmed", "run_id": body.run_id}
+    return {
+        "run_id": body.run_id,
+        "delivery_status": delivery_status,
+        "delivery_error": lg_result.get("delivery_error"),
+        "delivered_at": lg_result.get("delivered_at"),
+    }
