@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, Optional
 
 from beanie import Document, PydanticObjectId
 from pymongo import IndexModel, ASCENDING
@@ -33,6 +33,12 @@ class CustomIndexConfig(BaseModel):
     bedrock_aws_region: str | None = None
 
 
+class CustomLLMConfig(BaseModel):
+    """BYOLLM — user-supplied OpenAI or Anthropic direct API key."""
+    provider: Literal["openai", "anthropic"]
+    api_key: str  # stored encrypted via Fernet
+
+
 class User(Document):
     firebase_uid: str
     email: str
@@ -42,6 +48,7 @@ class User(Document):
     usage: UsageCounters = Field(default_factory=UsageCounters)
     active_source_id: PydanticObjectId | None = None
     custom_index: CustomIndexConfig | None = None
+    custom_llm: Optional[CustomLLMConfig] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

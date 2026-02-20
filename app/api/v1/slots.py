@@ -14,6 +14,7 @@ from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
 from app.services import claude_svc, gdocs_svc, notion_svc, slack_svc, vector_svc
+from app.services.claude_svc import CustomLLMCreds
 from app.services.vector_svc import CustomIndexCreds
 from app.utils.embeddings import CustomBedrockCreds, embed_text
 
@@ -125,23 +126,31 @@ async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: s
     return ""
 
 
-def _resolve_custom_creds(user: User) -> tuple[CustomIndexCreds | None, CustomBedrockCreds | None]:
-    """Extract decrypted custom index + bedrock creds from the user if configured and ready."""
+def _resolve_custom_creds(user: User) -> tuple[CustomIndexCreds | None, CustomBedrockCreds | None, CustomLLMCreds | None]:
+    """Extract decrypted custom index, bedrock, and LLM creds from the user if configured."""
     cfg = user.custom_index
-    if not cfg or cfg.index_status not in ("ready",):
-        return None, None
-    custom_index = CustomIndexCreds(
-        pinecone_api_key=decrypt_token(cfg.pinecone_api_key),
-        index_name=cfg.index_name,
-    )
+    custom_index = None
     custom_bedrock = None
-    if cfg.bedrock_aws_access_key_id and cfg.bedrock_aws_secret_access_key:
-        custom_bedrock = CustomBedrockCreds(
-            aws_access_key_id=decrypt_token(cfg.bedrock_aws_access_key_id),
-            aws_secret_access_key=decrypt_token(cfg.bedrock_aws_secret_access_key),
-            aws_region=cfg.bedrock_aws_region or "us-east-1",
+    if cfg and cfg.index_status == "ready":
+        custom_index = CustomIndexCreds(
+            pinecone_api_key=decrypt_token(cfg.pinecone_api_key),
+            index_name=cfg.index_name,
         )
-    return custom_index, custom_bedrock
+        if cfg.bedrock_aws_access_key_id and cfg.bedrock_aws_secret_access_key:
+            custom_bedrock = CustomBedrockCreds(
+                aws_access_key_id=decrypt_token(cfg.bedrock_aws_access_key_id),
+                aws_secret_access_key=decrypt_token(cfg.bedrock_aws_secret_access_key),
+                aws_region=cfg.bedrock_aws_region or "us-east-1",
+            )
+
+    custom_llm = None
+    if user.custom_llm:
+        custom_llm = CustomLLMCreds(
+            provider=user.custom_llm.provider,
+            api_key=decrypt_token(user.custom_llm.api_key),
+        )
+
+    return custom_index, custom_bedrock, custom_llm
 
 
 async def _embed_and_enrich_slot(
@@ -157,9 +166,9 @@ async def _embed_and_enrich_slot(
     if not slot:
         return
 
-    # Resolve custom index/bedrock creds from user config
+    # Resolve custom index/bedrock/llm creds from user config
     user = await User.get(PydanticObjectId(user_id))
-    custom_index, custom_bedrock = _resolve_custom_creds(user) if user else (None, None)
+    custom_index, custom_bedrock, custom_llm = _resolve_custom_creds(user) if user else (None, None, None)
 
     # Check if custom index was deleted before we try to use it
     if custom_index and not await asyncio.to_thread(vector_svc.check_custom_index_exists, custom_index):
@@ -173,17 +182,17 @@ async def _embed_and_enrich_slot(
         try:
             raw_content = await _fetch_resource_content(slot, provider, user_id)
             if raw_content.strip():
-                summary = await claude_svc.summarize_slot_content(slot.name, raw_content)
+                summary = await claude_svc.summarize_slot_content(slot.name, raw_content, custom_llm)
                 slot.content_sample = summary
                 await slot.save()
                 logger.info("Content indexed for slot %s", slot_id)
         except Exception:
             logger.exception("Content reading failed for slot %s", slot_id)
 
-    # Step 2: auto-enrich description/tags with Haiku if not user-provided
+    # Step 2: auto-enrich description/tags if not user-provided
     if not user_provided_description or not user_provided_tags:
         try:
-            meta = await claude_svc.infer_slot_metadata(slot.name, source_name, provider)
+            meta = await claude_svc.infer_slot_metadata(slot.name, source_name, provider, custom_llm)
             changed = False
             if not user_provided_description and meta.get("description"):
                 slot.description = meta["description"]
@@ -313,7 +322,7 @@ async def update_slot(
     slot.updated_at = datetime.now(timezone.utc)
     await slot.save()
 
-    custom_index, custom_bedrock = _resolve_custom_creds(current_user)
+    custom_index, custom_bedrock, _ = _resolve_custom_creds(current_user)
     try:
         source = await Source.get(slot.source_id)
         summary_vec, content_vec = await _embed_slot(slot, source, custom_bedrock)
@@ -343,7 +352,7 @@ async def delete_slot(
     current_user.usage.slots_count = max(0, current_user.usage.slots_count - 1)
     await current_user.save()
 
-    custom_index, _ = _resolve_custom_creds(current_user)
+    custom_index, _, _llm = _resolve_custom_creds(current_user)
     try:
         vector_svc.delete_slot(slot_id_str, custom_index)
     except Exception:

@@ -8,7 +8,7 @@ from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.core.security import decrypt_token, encrypt_token
 from app.models.source import Source
-from app.models.user import CustomIndexConfig, User
+from app.models.user import CustomIndexConfig, CustomLLMConfig, User
 from app.services import vector_svc
 from app.services.vector_svc import CustomIndexCreds
 from beanie import PydanticObjectId
@@ -157,20 +157,67 @@ async def get_custom_index_creds_internal(user_id: str) -> dict:
         user = await User.get(PydanticObjectId(user_id))
     except Exception:
         return {"has_custom": False}
-    if not user or not user.custom_index or user.custom_index.index_status != "ready":
+    if not user:
         return {"has_custom": False}
+
+    result: dict = {"has_custom": False}
+
+    # Custom Pinecone index creds
     cfg = user.custom_index
-    result: dict = {
-        "has_custom": True,
-        "pinecone_api_key": decrypt_token(cfg.pinecone_api_key),
-        "index_name": cfg.index_name,
-        "has_bedrock": bool(cfg.bedrock_aws_access_key_id),
-    }
-    if cfg.bedrock_aws_access_key_id and cfg.bedrock_aws_secret_access_key:
-        result["bedrock_aws_access_key_id"] = decrypt_token(cfg.bedrock_aws_access_key_id)
-        result["bedrock_aws_secret_access_key"] = decrypt_token(cfg.bedrock_aws_secret_access_key)
-        result["bedrock_aws_region"] = cfg.bedrock_aws_region or "us-east-1"
+    if cfg and cfg.index_status == "ready":
+        result["has_custom"] = True
+        result["pinecone_api_key"] = decrypt_token(cfg.pinecone_api_key)
+        result["index_name"] = cfg.index_name
+        result["has_bedrock"] = bool(cfg.bedrock_aws_access_key_id)
+        if cfg.bedrock_aws_access_key_id and cfg.bedrock_aws_secret_access_key:
+            result["bedrock_aws_access_key_id"] = decrypt_token(cfg.bedrock_aws_access_key_id)
+            result["bedrock_aws_secret_access_key"] = decrypt_token(cfg.bedrock_aws_secret_access_key)
+            result["bedrock_aws_region"] = cfg.bedrock_aws_region or "us-east-1"
+
+    # Custom LLM creds (BYOLLM)
+    llm = user.custom_llm
+    if llm:
+        result["llm_provider"] = llm.provider
+        result["llm_api_key"] = decrypt_token(llm.api_key)
+    else:
+        result["llm_provider"] = None
+        result["llm_api_key"] = None
+
     return result
+
+
+class CustomLLMRequest(BaseModel):
+    provider: str  # "openai" or "anthropic"
+    api_key: str
+
+
+@router.post("/me/custom-llm", status_code=201)
+async def connect_custom_llm(
+    body: CustomLLMRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    if body.provider not in ("openai", "anthropic"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail="provider must be 'openai' or 'anthropic'")
+    current_user.custom_llm = CustomLLMConfig(
+        provider=body.provider,  # type: ignore[arg-type]
+        api_key=encrypt_token(body.api_key),
+    )
+    await current_user.save()
+    return {"provider": body.provider}
+
+
+@router.get("/me/custom-llm")
+async def get_custom_llm(current_user: User = Depends(get_current_user)) -> dict:
+    if not current_user.custom_llm:
+        return {"provider": None}
+    return {"provider": current_user.custom_llm.provider}
+
+
+@router.delete("/me/custom-llm", status_code=204)
+async def disconnect_custom_llm(current_user: User = Depends(get_current_user)) -> None:
+    current_user.custom_llm = None
+    await current_user.save()
 
 
 @router.patch("/me/active-source")
