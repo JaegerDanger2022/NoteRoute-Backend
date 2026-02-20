@@ -22,15 +22,6 @@ class TierLimitError(HTTPException):
         super().__init__(status_code=403, detail=detail)
 
 
-class RateLimitError(HTTPException):
-    def __init__(self, retry_after: int = 60):
-        super().__init__(
-            status_code=429,
-            detail="Monthly route limit reached",
-            headers={"Retry-After": str(retry_after)},
-        )
-
-
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,

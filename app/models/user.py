@@ -9,16 +9,11 @@ from pydantic import BaseModel, Field
 class TierLimits(BaseModel):
     max_sources: int = 3
     max_slots: int = 50
-    max_routes_per_month: int = 10
 
 
 class UsageCounters(BaseModel):
-    routes_this_month: int = 0
     slots_count: int = 0
     sources_count: int = 0
-    period_reset_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
 
 
 class CustomIndexConfig(BaseModel):

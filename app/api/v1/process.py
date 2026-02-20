@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.config import settings
-from app.core.exceptions import RateLimitError, NotFoundError
+from app.core.exceptions import NotFoundError
 from app.models.route import Route, RouteEvent
 from app.models.user import User
 from app.services.langgraph_client import run_pipeline
@@ -45,9 +45,6 @@ async def process_voice_note(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Kick off the LangGraph pipeline for a voice note that was uploaded to S3."""
-    if current_user.usage.routes_this_month >= current_user.limits.max_routes_per_month:
-        raise RateLimitError()
-
     run_id = str(uuid.uuid4())
 
     route = Route(
@@ -57,9 +54,6 @@ async def process_voice_note(
         status="processing",
     )
     await route.insert()
-
-    current_user.usage.routes_this_month += 1
-    await current_user.save()
 
     result = await run_pipeline(
         run_id=run_id,
@@ -82,9 +76,6 @@ async def process_stream(
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Start a streaming pipeline run and proxy the SSE stream from LangGraph."""
-    if current_user.usage.routes_this_month >= current_user.limits.max_routes_per_month:
-        raise RateLimitError()
-
     if not current_user.active_source_id:
         raise NotFoundError("No active source selected. Select a source before recording.")
 
@@ -97,9 +88,6 @@ async def process_stream(
         status="processing",
     )
     await route.insert()
-
-    current_user.usage.routes_this_month += 1
-    await current_user.save()
 
     payload = {
         "run_id": run_id,
@@ -138,9 +126,6 @@ async def process_text_stream(
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
     """Start a streaming pipeline run from raw text (skips transcription)."""
-    if current_user.usage.routes_this_month >= current_user.limits.max_routes_per_month:
-        raise RateLimitError()
-
     if not current_user.active_source_id:
         raise NotFoundError("No active source selected. Select a source before submitting.")
 
@@ -153,9 +138,6 @@ async def process_text_stream(
         status="processing",
     )
     await route.insert()
-
-    current_user.usage.routes_this_month += 1
-    await current_user.save()
 
     payload = {
         "run_id": run_id,

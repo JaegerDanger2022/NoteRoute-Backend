@@ -35,10 +35,8 @@ async def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "limits": {
             "max_sources": current_user.limits.max_sources,
             "max_slots": current_user.limits.max_slots,
-            "max_routes_per_month": current_user.limits.max_routes_per_month,
         },
         "usage": {
-            "routes_this_month": current_user.usage.routes_this_month,
             "slots_count": current_user.usage.slots_count,
             "sources_count": current_user.usage.sources_count,
         },
