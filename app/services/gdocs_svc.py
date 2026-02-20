@@ -127,6 +127,28 @@ def _append_content_sync(document_id: str, content: str, access_token: str) -> N
     ).execute()
 
 
+def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: int = 4000) -> str:
+    """Extract plain text from a Google Doc, capped at max_chars."""
+    docs_service = _build_docs(access_token)
+    doc = docs_service.documents().get(documentId=document_id).execute()
+    parts = []
+    for element in doc.get("body", {}).get("content", []):
+        paragraph = element.get("paragraph")
+        if not paragraph:
+            continue
+        for pe in paragraph.get("elements", []):
+            text_run = pe.get("textRun")
+            if text_run:
+                parts.append(text_run.get("content", ""))
+        if sum(len(p) for p in parts) >= max_chars:
+            break
+    return "".join(parts)[:max_chars].strip()
+
+
+async def fetch_document_text(document_id: str, access_token: str, max_chars: int = 4000) -> str:
+    return await asyncio.to_thread(_fetch_document_text_sync, document_id, access_token, max_chars)
+
+
 async def list_documents(access_token: str) -> list[dict]:
     return await asyncio.to_thread(_list_documents_sync, access_token)
 

@@ -81,6 +81,27 @@ async def append_block(page_id: str, content: str, access_token: str) -> None:
     )
 
 
+async def fetch_page_text(page_id: str, access_token: str, max_chars: int = 4000) -> str:
+    """Fetch plain text from a Notion page's blocks (top-level only), capped at max_chars."""
+    client = AsyncClient(auth=access_token)
+    resp = await client.blocks.children.list(block_id=page_id, page_size=50)
+    parts = []
+    for block in resp.get("results", []):
+        text = _extract_block_text(block)
+        if text:
+            parts.append(text)
+        if sum(len(p) for p in parts) >= max_chars:
+            break
+    return "\n".join(parts)[:max_chars]
+
+
+def _extract_block_text(block: dict) -> str:
+    btype = block.get("type", "")
+    data = block.get(btype, {})
+    rich_text = data.get("rich_text", [])
+    return "".join(t.get("plain_text", "") for t in rich_text)
+
+
 def _extract_title(page: dict) -> str:
     props = page.get("properties", {})
     for prop in props.values():

@@ -8,10 +8,12 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.core.exceptions import NotFoundError, TierLimitError
+from app.core.security import decrypt_token
+from app.models.integration import Integration
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
-from app.services import claude_svc, vector_svc
+from app.services import claude_svc, gdocs_svc, notion_svc, slack_svc, vector_svc
 from app.utils.embeddings import embed_text
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ class SlotCreateRequest(BaseModel):
     content_sample: str = ""
     destination: SlotDestination
     tags: list[str] = []
+    read_content: bool = False
 
 
 class SlotUpdateRequest(BaseModel):
@@ -45,6 +48,8 @@ def _slot_to_dict(slot: KnowledgeSlot) -> dict:
         "content_sample": slot.content_sample,
         "destination": slot.destination.model_dump(),
         "tags": slot.tags,
+        "read_content": slot.read_content,
+        "index_status": slot.index_status,
         "is_active": slot.is_active,
         "created_at": slot.created_at.isoformat(),
         "updated_at": slot.updated_at.isoformat(),
@@ -63,27 +68,82 @@ async def list_slots(
     return [_slot_to_dict(s) for s in slots]
 
 
-async def _enrich_slot(slot_id: str, source_name: str, provider: str, user_provided_description: bool, user_provided_tags: bool) -> None:
-    """Background task: use Claude Haiku to infer description + tags, then re-embed."""
+async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: str) -> str:
+    """Fetch raw text content from the provider resource this slot points to."""
+    integration = await Integration.find_one(
+        Integration.user_id == slot.user_id,
+        Integration.provider == provider,
+        Integration.is_active == True,
+    )
+    if not integration:
+        return ""
+    access_token = decrypt_token(integration.tokens.access_token)
+    resource_id = slot.destination.resource_id
+    if provider == "notion":
+        return await notion_svc.fetch_page_text(resource_id, access_token)
+    elif provider == "google":
+        return await gdocs_svc.fetch_document_text(resource_id, access_token)
+    elif provider == "slack":
+        return await slack_svc.fetch_channel_messages(resource_id, access_token)
+    return ""
+
+
+async def _embed_and_enrich_slot(
+    slot_id: str,
+    user_id: str,
+    source_name: str,
+    provider: str,
+    user_provided_description: bool,
+    user_provided_tags: bool,
+) -> None:
+    """Background task: optionally read content, enrich metadata, embed, and upsert."""
     slot = await KnowledgeSlot.get(PydanticObjectId(slot_id))
     if not slot:
         return
+
+    # Step 1: read & summarize resource content if user opted in
+    if slot.read_content:
+        try:
+            raw_content = await _fetch_resource_content(slot, provider, user_id)
+            if raw_content.strip():
+                summary = await claude_svc.summarize_slot_content(slot.name, raw_content)
+                slot.content_sample = summary
+                await slot.save()
+                logger.info("Content indexed for slot %s", slot_id)
+        except Exception:
+            logger.exception("Content reading failed for slot %s", slot_id)
+
+    # Step 2: auto-enrich description/tags with Haiku if not user-provided
+    if not user_provided_description or not user_provided_tags:
+        try:
+            meta = await claude_svc.infer_slot_metadata(slot.name, source_name, provider)
+            changed = False
+            if not user_provided_description and meta.get("description"):
+                slot.description = meta["description"]
+                changed = True
+            if not user_provided_tags and meta.get("tags"):
+                slot.tags = meta["tags"]
+                changed = True
+            if changed:
+                await slot.save()
+        except Exception:
+            logger.exception("Auto-enrich failed for slot %s", slot_id)
+
+    # Step 3: embed and upsert to Pinecone, then mark indexed
     try:
-        meta = await claude_svc.infer_slot_metadata(slot.name, source_name, provider)
-        changed = False
-        if not user_provided_description and meta["description"]:
-            slot.description = meta["description"]
-            changed = True
-        if not user_provided_tags and meta["tags"]:
-            slot.tags = meta["tags"]
-            changed = True
-        if changed:
-            await slot.save()
-            source = await Source.get(slot.source_id)
-            summary_vec, content_vec = await _embed_slot(slot, source)
-            vector_svc.upsert_slot(slot, summary_vec, content_vec)
+        source = await Source.get(slot.source_id)
+        summary_vec, content_vec = await _embed_slot(slot, source)
+        vector_svc.upsert_slot(slot, summary_vec, content_vec)
+        slot.index_status = "indexed"
+        await slot.save()
+        logger.info("Vector upsert complete for slot %s", slot_id)
     except Exception:
-        logger.exception("Auto-enrich failed for slot %s", slot_id)
+        logger.exception("Vector upsert failed for slot %s", slot_id)
+        try:
+            slot.index_status = "failed"
+            await slot.save()
+        except Exception:
+            pass
 
 
 @router.post("", status_code=201)
@@ -114,30 +174,25 @@ async def create_slot(
         content_sample=body.content_sample,
         destination=body.destination,
         tags=body.tags,
+        read_content=body.read_content,
     )
     await slot.insert()
 
     current_user.usage.slots_count += 1
     await current_user.save()
 
-    try:
-        summary_vec, content_vec = await _embed_slot(slot, source)
-        vector_svc.upsert_slot(slot, summary_vec, content_vec)
-    except Exception:
-        logger.exception("vector upsert failed for slot %s", slot.id)
-
-    # Auto-enrich description/tags in background if user left them blank
+    # Embedding + enrich always run in background so the response is fast
     user_provided_description = bool(body.description and body.description.strip() and body.description.strip() != body.name.strip())
     user_provided_tags = bool(body.tags)
-    if not user_provided_description or not user_provided_tags:
-        background_tasks.add_task(
-            _enrich_slot,
-            str(slot.id),
-            source.name,
-            source.provider,
-            user_provided_description,
-            user_provided_tags,
-        )
+    background_tasks.add_task(
+        _embed_and_enrich_slot,
+        str(slot.id),
+        str(current_user.id),
+        source.name,
+        source.provider,
+        user_provided_description,
+        user_provided_tags,
+    )
 
     return _slot_to_dict(slot)
 

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 
 from beanie import Document, PydanticObjectId
 from pymongo import IndexModel, ASCENDING
@@ -19,6 +20,8 @@ class KnowledgeSlot(Document):
     content_sample: str = ""
     destination: SlotDestination
     tags: list[str] = []
+    read_content: bool = False
+    index_status: Literal["pending", "indexed", "failed"] = "pending"
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

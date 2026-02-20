@@ -83,3 +83,37 @@ async def infer_slot_metadata(slot_name: str, source_name: str, provider: str) -
     return await asyncio.to_thread(
         _infer_slot_metadata_sync, slot_name, source_name, provider
     )
+
+
+def _summarize_slot_content_sync(slot_name: str, raw_content: str) -> str:
+    """Summarize raw resource content into a concise indexing-ready passage."""
+    client = _get_client()
+    truncated = raw_content[:6000]
+    prompt = f"""You are preparing a knowledge index entry.
+
+Slot name: "{slot_name}"
+Resource content (excerpt):
+---
+{truncated}
+---
+
+Write a concise summary (150-200 words) of what this resource is about and what kind of notes or information typically belong here. Focus on topic, purpose, and key themes — not a full transcription. Output plain text only, no markdown."""
+
+    body = json.dumps({
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 300,
+        "messages": [{"role": "user", "content": prompt}],
+    })
+    response = client.invoke_model(
+        modelId=_HAIKU_MODEL_ID,
+        contentType="application/json",
+        accept="application/json",
+        body=body,
+    )
+    result = json.loads(response["body"].read())
+    return result["content"][0]["text"].strip()
+
+
+async def summarize_slot_content(slot_name: str, raw_content: str) -> str:
+    """Async wrapper — returns a plain-text summary of resource content."""
+    return await asyncio.to_thread(_summarize_slot_content_sync, slot_name, raw_content)
