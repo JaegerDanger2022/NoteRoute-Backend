@@ -14,7 +14,12 @@ logger = logging.getLogger(__name__)
 # Paths that don't require authentication
 _PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
 # Path prefixes that don't require authentication (OAuth callbacks come from Google/Slack servers)
-_PUBLIC_PREFIXES = ("/api/v1/integrations/google/callback", "/api/v1/integrations/slack/callback")
+_PUBLIC_PREFIXES = (
+    "/api/v1/integrations/google/callback",
+    "/api/v1/integrations/slack/callback",
+    "/api/v1/users/internal/",
+    "/api/v1/slots/internal/",
+)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):

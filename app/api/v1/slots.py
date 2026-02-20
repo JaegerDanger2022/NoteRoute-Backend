@@ -85,13 +85,12 @@ async def batch_slot_metadata(ids: str = Query(..., description="Comma-separated
             pass
 
     slots = await KnowledgeSlot.find(
-        KnowledgeSlot.id.in_(object_ids),  # type: ignore[attr-defined]
-        KnowledgeSlot.is_active == True,
+        {"_id": {"$in": object_ids}, "is_active": True}
     ).to_list()
 
     # Batch-fetch sources to resolve integration_type (provider)
     source_ids = list({s.source_id for s in slots})
-    sources = await Source.find(Source.id.in_(source_ids)).to_list()  # type: ignore[attr-defined]
+    sources = await Source.find({"_id": {"$in": source_ids}}).to_list()
     source_map = {s.id: s for s in sources}
 
     result = []

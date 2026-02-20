@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timezone
 
@@ -35,6 +36,7 @@ class ConfirmRequest(BaseModel):
     confirmed_slot_id: str | None = None
     save_as_slot: bool = False
     target_tab_id: str | None = None
+    transcript: str | None = None
 
 
 @router.post("")
@@ -109,7 +111,7 @@ async def process_stream(
 
     async def _stream():
         # Send the run_id to the client first so it knows which run this is
-        yield f"data: {{'run_id': '{run_id}', 'node': 'init'}}\n\n"
+        yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "POST",
@@ -163,7 +165,7 @@ async def process_text_stream(
     }
 
     async def _stream():
-        yield f"data: {{'run_id': '{run_id}', 'node': 'init'}}\n\n"
+        yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
         async with httpx.AsyncClient(timeout=None) as client:
             async with client.stream(
                 "POST",
@@ -214,7 +216,9 @@ async def confirm_slot(
     if body.confirmed_slot_id:
         from beanie import PydanticObjectId
         route.confirmed_slot_id = PydanticObjectId(body.confirmed_slot_id)
-    route.status = "awaiting_confirmation"
+    if body.transcript:
+        route.transcript = body.transcript
+    route.status = "processing"
     route.events.append(RouteEvent(
         event_type="confirmed",
         metadata={
