@@ -110,7 +110,7 @@ def _create_document_sync(title: str, content: str, access_token: str) -> dict:
 def _list_tabs_sync(document_id: str, access_token: str) -> list[dict]:
     """Return a flat list of {tab_id, tab_title} for all tabs in a Google Doc."""
     docs_service = _build_docs(access_token)
-    doc = docs_service.documents().get(documentId=document_id, includeTabsContent=False).execute()
+    doc = docs_service.documents().get(documentId=document_id, includeTabsContent=True).execute()
 
     result: list[dict] = []
 
@@ -126,6 +126,7 @@ def _list_tabs_sync(document_id: str, access_token: str) -> list[dict]:
                 _walk(child_tabs)
 
     tabs = doc.get("tabs", [])
+    logger.info("list_tabs doc_id=%s tabs_count=%d doc_keys=%s", document_id, len(tabs), list(doc.keys()))
     if tabs:
         _walk(tabs)
     else:
