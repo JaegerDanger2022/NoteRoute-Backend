@@ -162,7 +162,7 @@ def _append_content_sync(document_id: str, content: str, access_token: str, tab_
                 {
                     "insertText": {
                         "location": location,
-                        "text": "\n" + content,
+                        "text": "\n\n" + content,
                     }
                 }
             ]
