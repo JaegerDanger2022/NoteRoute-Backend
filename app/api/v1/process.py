@@ -195,7 +195,10 @@ async def confirm_slot(
         resp.raise_for_status()
         lg_result = resp.json()
 
-    delivery_status = lg_result.get("status", "unknown")
+    _valid_statuses = {"processing", "awaiting_confirmation", "delivered", "failed", "rejected"}
+    delivery_status = lg_result.get("status", "failed")
+    if delivery_status not in _valid_statuses:
+        delivery_status = "failed"
 
     # Update route record
     if body.confirmed_slot_id:

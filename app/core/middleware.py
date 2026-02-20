@@ -19,6 +19,7 @@ _PUBLIC_PREFIXES = (
     "/api/v1/integrations/slack/callback",
     "/api/v1/users/internal/",
     "/api/v1/slots/internal/",
+    "/api/v1/deliver",
 )
 
 
