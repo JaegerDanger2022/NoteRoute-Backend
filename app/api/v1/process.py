@@ -1,8 +1,11 @@
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -195,9 +198,12 @@ async def confirm_slot(
         resp.raise_for_status()
         lg_result = resp.json()
 
+    logger.info("LangGraph /confirm response: %s", lg_result)
+
     _valid_statuses = {"processing", "awaiting_confirmation", "delivered", "failed", "rejected"}
     delivery_status = lg_result.get("status", "failed")
     if delivery_status not in _valid_statuses:
+        logger.warning("Unexpected delivery_status from LangGraph: %r — mapping to failed", delivery_status)
         delivery_status = "failed"
 
     # Update route record
