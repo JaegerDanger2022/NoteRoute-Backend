@@ -34,6 +34,7 @@ class ConfirmRequest(BaseModel):
     run_id: str
     confirmed_slot_id: str | None = None
     save_as_slot: bool = False
+    target_tab_id: str | None = None
 
 
 @router.post("")
@@ -204,6 +205,7 @@ async def confirm_slot(
                 "run_id": body.run_id,
                 "confirmed_slot_id": body.confirmed_slot_id,
                 "save_as_slot": body.save_as_slot,
+                "target_tab_id": body.target_tab_id,
             },
         )
         resp.raise_for_status()

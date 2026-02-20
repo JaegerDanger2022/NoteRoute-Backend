@@ -107,10 +107,52 @@ def _create_document_sync(title: str, content: str, access_token: str) -> dict:
     }
 
 
-def _append_content_sync(document_id: str, content: str, access_token: str) -> None:
+def _list_tabs_sync(document_id: str, access_token: str) -> list[dict]:
+    """Return a flat list of {tab_id, tab_title} for all tabs in a Google Doc."""
     docs_service = _build_docs(access_token)
-    doc = docs_service.documents().get(documentId=document_id).execute()
-    end_index = doc["body"]["content"][-1]["endIndex"] - 1
+    doc = docs_service.documents().get(documentId=document_id, includeTabsContent=False).execute()
+
+    result: list[dict] = []
+
+    def _walk(tab_list: list) -> None:
+        for tab in tab_list:
+            tab_props = tab.get("tabProperties", {})
+            result.append({
+                "tab_id": tab_props.get("tabId", ""),
+                "tab_title": tab_props.get("title", "Untitled"),
+            })
+            child_tabs = tab.get("childTabs", [])
+            if child_tabs:
+                _walk(child_tabs)
+
+    tabs = doc.get("tabs", [])
+    if tabs:
+        _walk(tabs)
+    else:
+        # Single-body doc with no tabs structure — synthesise one entry
+        result.append({"tab_id": "", "tab_title": "Document"})
+
+    return result
+
+
+def _append_content_sync(document_id: str, content: str, access_token: str, tab_id: str | None = None) -> None:
+    docs_service = _build_docs(access_token)
+
+    if tab_id:
+        # Fetch just that tab's body to get its end index
+        doc = docs_service.documents().get(documentId=document_id, includeTabsContent=True).execute()
+        end_index = 1  # fallback
+        for tab in doc.get("tabs", []):
+            if tab.get("tabProperties", {}).get("tabId") == tab_id:
+                tab_body = tab.get("documentTab", {}).get("body", {}).get("content", [])
+                if tab_body:
+                    end_index = tab_body[-1]["endIndex"] - 1
+                break
+        location = {"index": end_index, "tabId": tab_id}
+    else:
+        doc = docs_service.documents().get(documentId=document_id).execute()
+        end_index = doc["body"]["content"][-1]["endIndex"] - 1
+        location = {"index": end_index}
 
     docs_service.documents().batchUpdate(
         documentId=document_id,
@@ -118,7 +160,7 @@ def _append_content_sync(document_id: str, content: str, access_token: str) -> N
             "requests": [
                 {
                     "insertText": {
-                        "location": {"index": end_index},
+                        "location": location,
                         "text": "\n" + content,
                     }
                 }
@@ -181,5 +223,9 @@ async def create_document(title: str, content: str, access_token: str) -> dict:
     return await asyncio.to_thread(_create_document_sync, title, content, access_token)
 
 
-async def append_content(document_id: str, content: str, access_token: str) -> None:
-    await asyncio.to_thread(_append_content_sync, document_id, content, access_token)
+async def list_tabs(document_id: str, access_token: str) -> list[dict]:
+    return await asyncio.to_thread(_list_tabs_sync, document_id, access_token)
+
+
+async def append_content(document_id: str, content: str, access_token: str, tab_id: str | None = None) -> None:
+    await asyncio.to_thread(_append_content_sync, document_id, content, access_token, tab_id)

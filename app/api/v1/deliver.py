@@ -52,6 +52,7 @@ class DeliverRequest(BaseModel):
     summary: str = ""
     user_id: str
     save_as_slot: bool = False
+    target_tab_id: str | None = None
 
 
 @router.post("")
@@ -75,7 +76,7 @@ async def deliver(body: DeliverRequest) -> dict:
         if body.save_as_slot:
             result = await _save_as_new_slot(user, body.content, body.summary, route)
         else:
-            result = await _deliver_to_slot(body.slot_id, body.content, user)
+            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id)
 
         route.status = "delivered"
         route.summary = body.summary or None
@@ -100,7 +101,7 @@ async def deliver(body: DeliverRequest) -> dict:
         raise
 
 
-async def _deliver_to_slot(slot_id: str | None, content: str, user: User) -> dict:
+async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None) -> dict:
     if not slot_id:
         raise ValueError("No slot_id provided for delivery")
 
@@ -125,7 +126,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User) -> dic
     if source.provider == "notion":
         await notion_svc.append_block(slot.destination.resource_id, content, access_token)
     elif source.provider == "google":
-        await gdocs_svc.append_content(slot.destination.resource_id, content, access_token)
+        await gdocs_svc.append_content(slot.destination.resource_id, content, access_token, tab_id=target_tab_id)
     elif source.provider == "slack":
         await slack_svc.post_message(slot.destination.resource_id, content, access_token)
 

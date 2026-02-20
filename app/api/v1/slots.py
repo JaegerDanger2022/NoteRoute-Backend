@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
@@ -67,6 +67,42 @@ async def list_slots(
         query.append(KnowledgeSlot.source_id == PydanticObjectId(source_id))
     slots = await KnowledgeSlot.find(*query).to_list()
     return [_slot_to_dict(s) for s in slots]
+
+
+@router.get("/internal/batch")
+async def batch_slot_metadata(ids: str = Query(..., description="Comma-separated slot ObjectIds")) -> list[dict]:
+    """Internal endpoint (no auth) — returns slot metadata for LangGraph rank_node enrichment."""
+    id_list = [i.strip() for i in ids.split(",") if i.strip()]
+    if not id_list:
+        return []
+
+    object_ids = []
+    for raw_id in id_list:
+        try:
+            object_ids.append(PydanticObjectId(raw_id))
+        except Exception:
+            pass
+
+    slots = await KnowledgeSlot.find(
+        KnowledgeSlot.id.in_(object_ids),  # type: ignore[attr-defined]
+        KnowledgeSlot.is_active == True,
+    ).to_list()
+
+    # Batch-fetch sources to resolve integration_type (provider)
+    source_ids = list({s.source_id for s in slots})
+    sources = await Source.find(Source.id.in_(source_ids)).to_list()  # type: ignore[attr-defined]
+    source_map = {s.id: s for s in sources}
+
+    result = []
+    for slot in slots:
+        src = source_map.get(slot.source_id)
+        result.append({
+            "slot_id": str(slot.id),
+            "slot_name": slot.name,
+            "integration_type": src.provider if src else "unknown",
+            "resource_id": slot.destination.resource_id,
+        })
+    return result
 
 
 async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: str) -> str:
