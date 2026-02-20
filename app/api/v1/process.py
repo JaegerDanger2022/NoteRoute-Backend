@@ -104,21 +104,27 @@ async def process_stream(
     async def _stream():
         # Emit init event with run_id immediately
         yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
-        # Call LangGraph non-streaming /run endpoint — avoids chunked proxy issues
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"{settings.langgraph_url}/run",
-                json=payload,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-        # Emit events that the frontend expects
-        if result.get("transcript"):
-            yield f"event: transcribe\ndata: {json.dumps({'node': 'transcribe', 'transcript': result['transcript']})}\n\n"
-        if result.get("ranked_slots"):
-            yield f"event: rank\ndata: {json.dumps({'node': 'rank', 'ranked_slots': result['ranked_slots'], 'summary': result.get('summary')})}\n\n"
-        if result.get("error"):
-            yield f"event: error\ndata: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
+        try:
+            # Call LangGraph non-streaming /run endpoint — avoids chunked proxy issues
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(
+                    f"{settings.langgraph_url}/run",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+            # Emit events that the frontend expects
+            if result.get("transcript"):
+                yield f"event: transcribe\ndata: {json.dumps({'node': 'transcribe', 'transcript': result['transcript']})}\n\n"
+            # Always emit rank event (even empty list) so frontend can transition out of "searching"
+            ranked_slots = result.get("ranked_slots") or []
+            if result.get("error"):
+                yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
+        except Exception as e:
+            logger.error("Pipeline stream failed: %s", e)
+            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         _stream(),
@@ -158,19 +164,23 @@ async def process_text_stream(
 
     async def _stream():
         yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
-        # Call LangGraph non-streaming /run endpoint — avoids chunked proxy issues
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"{settings.langgraph_url}/run/text",
-                json=payload,
-            )
-            resp.raise_for_status()
-            result = resp.json()
-        # Emit events that the frontend expects
-        if result.get("ranked_slots"):
-            yield f"event: rank\ndata: {json.dumps({'node': 'rank', 'ranked_slots': result['ranked_slots'], 'summary': result.get('summary')})}\n\n"
-        if result.get("error"):
-            yield f"event: error\ndata: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
+        try:
+            # Call LangGraph non-streaming /run endpoint — avoids chunked proxy issues
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(
+                    f"{settings.langgraph_url}/run/text",
+                    json=payload,
+                )
+                resp.raise_for_status()
+                result = resp.json()
+            ranked_slots = result.get("ranked_slots") or []
+            if result.get("error"):
+                yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
+        except Exception as e:
+            logger.error("Text pipeline stream failed: %s", e)
+            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         _stream(),

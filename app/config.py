@@ -54,8 +54,11 @@ class Settings(BaseSettings):
     SLACK_CLIENT_SECRET: str = ""
     SLACK_REDIRECT_URI: str = ""
 
-    # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:8081"
+    # CORS (comma-separated list)
+    ALLOWED_ORIGINS: str = "http://localhost:8081,http://localhost:3000"
+
+    # Web app URL (used for OAuth callbacks from the Next.js frontend)
+    WEB_APP_URL: str = "http://localhost:3000"
 
 
 settings = Settings()

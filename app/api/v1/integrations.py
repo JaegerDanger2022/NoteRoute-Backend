@@ -35,6 +35,7 @@ _SLACK_SCOPES = "channels:read,chat:write"
 async def connect_integration(
     provider: str,
     current_user: User = Depends(get_current_user),
+    platform: str = "mobile",
 ) -> dict:
     """Initiate connection to a provider.
 
@@ -42,8 +43,14 @@ async def connect_integration(
     For Google/Slack: returns the OAuth URL for the client to open in a browser.
     Google connect requests read-only scopes only; write access is requested
     incrementally before the first delivery.
+
+    Pass ?platform=web from the Next.js frontend so the OAuth callback
+    redirects to the web app instead of the mobile deep link.
     """
+    # Append |web to state so the callback knows which platform to redirect to
     state = str(current_user.id)
+    if platform == "web":
+        state += "|web"
 
     if provider == "notion":
         await _store_notion_internal(current_user)
@@ -79,18 +86,27 @@ async def connect_integration(
 @router.get("/google/upgrade-write")
 async def upgrade_google_write(
     current_user: User = Depends(get_current_user),
+    platform: str = "mobile",
 ) -> dict:
     """Return an OAuth URL that adds the documents (write) scope incrementally.
 
     Google merges this with already-granted scopes so the user only sees
     the new permission on the consent screen.
+
+    Pass ?platform=web from the Next.js frontend so the callback redirects
+    back to the web app instead of the mobile deep link.
     """
     integration = await Integration.find_one(
         Integration.user_id == current_user.id,
         Integration.provider == "google",
         Integration.is_active == True,
     )
+    # Encode platform into state so callback knows where to redirect
     state = str(current_user.id)
+    if platform == "web":
+        state += "|web"
+    state += "__upgrade"
+
     login_hint = integration.provider_email if integration else None
 
     url = (
@@ -101,7 +117,7 @@ async def upgrade_google_write(
         f"&access_type=offline"
         f"&include_granted_scopes=true"
         f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
-        f"&state={state}__upgrade"
+        f"&state={state}"
     )
     if login_hint:
         url += f"&login_hint={login_hint}"
@@ -127,8 +143,16 @@ async def google_has_write(
 
 @router.get("/{provider}/callback", response_model=None)
 async def oauth_callback(provider: str, code: str, state: str) -> RedirectResponse:
-    """Handle OAuth callback — exchange code for tokens, store encrypted, redirect to app."""
-    is_upgrade = state.endswith("__upgrade")
+    """Handle OAuth callback — exchange code for tokens, store encrypted, redirect to app.
+
+    State format:
+      "{user_id}"              → mobile deep link
+      "{user_id}|web"          → web app callback
+      "{user_id}__upgrade"     → mobile write-scope upgrade
+      "{user_id}|web__upgrade" → web write-scope upgrade
+    """
+    is_upgrade = state.endswith("__upgrade") or "|web__upgrade" in state
+    is_web = "|web" in state
 
     if provider == "google":
         await _handle_google_callback(code, state)
@@ -137,6 +161,14 @@ async def oauth_callback(provider: str, code: str, state: str) -> RedirectRespon
     else:
         raise NotFoundError(f"Unknown provider: {provider}")
 
+    if is_web:
+        # Redirect to the Next.js OAuth callback page
+        web_url = f"{settings.WEB_APP_URL}/oauth/callback?provider={provider}&status=success"
+        if is_upgrade:
+            web_url += "&scope_upgrade=true"
+        return RedirectResponse(url=web_url, status_code=302)
+
+    # Mobile deep link
     deep_link = f"noteroute://oauth/success?provider={provider}"
     if is_upgrade:
         deep_link += "&scope_upgrade=true"
@@ -233,8 +265,8 @@ async def _store_notion_internal(user: User) -> None:
 
 async def _handle_google_callback(code: str, state: str) -> None:
     """Exchange Google auth code for tokens, store, upsert Source."""
-    # Strip upgrade suffix before using state as a user_id
-    raw_user_id = state.removesuffix("__upgrade")
+    # Strip platform and upgrade suffixes before using state as a user_id
+    raw_user_id = state.removesuffix("__upgrade").split("|")[0]
 
     async with httpx.AsyncClient() as client:
         token_resp = await client.post(
@@ -331,7 +363,8 @@ async def _handle_slack_callback(code: str, state: str) -> None:
     workspace_name = team.get("name", "Slack Workspace")
     workspace_id = team.get("id", "unknown")
 
-    user_id = PydanticObjectId(state)
+    raw_user_id = state.split("|")[0]
+    user_id = PydanticObjectId(raw_user_id)
     user = await User.get(user_id)
     if not user:
         return
