@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import traceback
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +18,17 @@ from app.services import vector_svc
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
 logger = logging.getLogger(__name__)
 
+async def _keep_alive_loop() -> None:
+    """Ping the LangGraph service every 4 minutes to prevent Railway cold starts."""
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while True:
+            await asyncio.sleep(240)
+            try:
+                await client.get(f"{settings.langgraph_url}/health")
+                logger.debug("Keep-alive ping to LangGraph OK")
+            except Exception:
+                logger.debug("Keep-alive ping to LangGraph failed (service may be warming up)")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,7 +40,9 @@ async def lifespan(app: FastAPI):
         logger.info("Connected to MongoDB, Firebase, and S3 Vectors")
     except Exception:
         logger.exception("S3 Vectors init failed — continuing without vector store")
+    keep_alive_task = asyncio.create_task(_keep_alive_loop())
     yield
+    keep_alive_task.cancel()
     await close_db()
     logger.info("Shutdown complete")
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class RouteEvent(BaseModel):
     event_type: Literal[
         "transcribed", "searched", "ranked", "confirmed",
-        "delivered", "failed", "rejected"
+        "delivered", "failed", "rejected", "retried"
     ]
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: dict = Field(default_factory=dict)
@@ -29,6 +29,9 @@ class Route(Document):
     events: list[RouteEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: datetime | None = None
+    delivery_url: str | None = None  # URL to the resource where content was delivered
+    slot_name: str | None = None     # Cached at delivery time so history always shows it
+    retry_count: int = 0
 
     class Settings:
         name = "routes"

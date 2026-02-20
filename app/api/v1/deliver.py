@@ -82,6 +82,8 @@ async def deliver(body: DeliverRequest) -> dict:
         route.status = "delivered"
         route.summary = body.summary or None
         route.completed_at = now
+        route.delivery_url = result.get("resource_url")
+        route.slot_name = result.get("slot_name")
         route.events.append(RouteEvent(
             event_type="delivered",
             metadata=result,
@@ -142,6 +144,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         "slot_id": slot_id,
         "slot_name": slot.name,
         "provider": source.provider,
+        "resource_url": slot.destination.resource_url if slot.destination else None,
     }
 
 
@@ -247,8 +250,12 @@ async def _save_as_new_slot(
             embed_text(source_context + slot.content_sample),
         )
         vector_svc.upsert_slot(slot, summary_vec, content_vec)
+        slot.index_status = "indexed"
+        await slot.save()
     except Exception:
         logger.exception("Vector upsert failed for new slot %s", slot.id)
+        slot.index_status = "failed"
+        await slot.save()
 
     # Link route to the new slot
     route.confirmed_slot_id = slot.id
@@ -262,4 +269,5 @@ async def _save_as_new_slot(
         "slot_name": slot.name,
         "provider": source.provider,
         "saved_as_new_slot": True,
+        "resource_url": slot.destination.resource_url if slot.destination else None,
     }

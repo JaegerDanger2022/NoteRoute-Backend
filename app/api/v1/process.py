@@ -44,6 +44,11 @@ class ConfirmRequest(BaseModel):
     doc_title: str | None = None
 
 
+class CreateDocRequest(BaseModel):
+    content: str
+    doc_title: str = ""
+
+
 @router.post("")
 async def process_voice_note(
     body: ProcessRequest,
@@ -103,8 +108,8 @@ async def process_stream(
     }
 
     async def _stream():
-        # Emit init event with run_id immediately
-        yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
+        # Emit init event with run_id and route_id immediately
+        yield f"data: {json.dumps({'run_id': run_id, 'route_id': str(route.id), 'node': 'init'})}\n\n"
 
         # Run LangGraph pipeline as a background task while streaming keepalives
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -170,7 +175,7 @@ async def process_text_stream(
     }
 
     async def _stream():
-        yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
+        yield f"data: {json.dumps({'run_id': run_id, 'route_id': str(route.id), 'node': 'init'})}\n\n"
 
         async with httpx.AsyncClient(timeout=300.0) as client:
             lg_task = asyncio.create_task(
@@ -203,6 +208,54 @@ async def process_text_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/create-doc")
+async def create_doc(
+    body: CreateDocRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Skip the pipeline entirely — create a new doc in the active source and index it."""
+    if not current_user.active_source_id:
+        raise NotFoundError("No active source selected. Select a source before creating a doc.")
+
+    run_id = str(uuid.uuid4())
+    route = Route(
+        user_id=current_user.id,
+        run_id=run_id,
+        audio_s3_key="",
+        transcript=body.content,
+        status="processing",
+    )
+    await route.insert()
+
+    from app.api.v1.deliver import _save_as_new_slot
+    try:
+        result = await _save_as_new_slot(
+            current_user,
+            body.content,
+            "",  # no summary — title is enough
+            route,
+            body.doc_title or None,
+        )
+        now = datetime.now(timezone.utc)
+        route.status = "delivered"
+        route.completed_at = now
+        route.delivery_url = result.get("resource_url")
+        route.slot_name = result.get("slot_name")
+        route.events.append(RouteEvent(event_type="delivered", metadata=result))
+        await route.save()
+        return {
+            "route_id": str(route.id),
+            "delivery_status": "delivered",
+            **result,
+        }
+    except Exception:
+        route.status = "failed"
+        route.completed_at = datetime.now(timezone.utc)
+        route.events.append(RouteEvent(event_type="failed", metadata={}))
+        await route.save()
+        raise
 
 
 @router.post("/confirm")
