@@ -45,8 +45,9 @@ class ConfirmRequest(BaseModel):
 
 
 class CreateDocRequest(BaseModel):
-    content: str
+    content: str = ""
     doc_title: str = ""
+    audio_s3_key: str = ""  # if provided, transcribe first and use as content
 
 
 @router.post("")
@@ -215,16 +216,38 @@ async def create_doc(
     body: CreateDocRequest,
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Skip the pipeline entirely — create a new doc in the active source and index it."""
+    """Skip the pipeline entirely — create a new doc in the active source and index it.
+    Accepts either typed content or an audio_s3_key (which gets transcribed first)."""
     if not current_user.active_source_id:
         raise NotFoundError("No active source selected. Select a source before creating a doc.")
+
+    # If audio provided, transcribe it via LangGraph's /transcribe endpoint
+    content = body.content.strip()
+    transcript_from_audio: str | None = None
+    if body.audio_s3_key:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                f"{settings.langgraph_url}/transcribe",
+                json={"audio_s3_key": body.audio_s3_key, "audio_duration_sec": 0, "user_id": str(current_user.id)},
+            )
+            resp.raise_for_status()
+            lg = resp.json()
+            if lg.get("error"):
+                from app.core.exceptions import BadRequestError
+                raise BadRequestError(f"Transcription failed: {lg['error']}")
+            transcript_from_audio = lg.get("transcript", "")
+        content = transcript_from_audio or content
+
+    if not content:
+        from app.core.exceptions import BadRequestError
+        raise BadRequestError("Content is required (text or audio).")
 
     run_id = str(uuid.uuid4())
     route = Route(
         user_id=current_user.id,
         run_id=run_id,
-        audio_s3_key="",
-        transcript=body.content,
+        audio_s3_key=body.audio_s3_key or "",
+        transcript=content,
         status="processing",
     )
     await route.insert()
@@ -233,7 +256,7 @@ async def create_doc(
     try:
         result = await _save_as_new_slot(
             current_user,
-            body.content,
+            content,
             "",  # no summary — title is enough
             route,
             body.doc_title or None,
@@ -248,6 +271,7 @@ async def create_doc(
         return {
             "route_id": str(route.id),
             "delivery_status": "delivered",
+            "transcript": content if transcript_from_audio else None,
             **result,
         }
     except Exception:
