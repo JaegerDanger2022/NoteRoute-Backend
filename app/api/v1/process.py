@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -104,27 +105,33 @@ async def process_stream(
     async def _stream():
         # Emit init event with run_id immediately
         yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
-        try:
-            # Call LangGraph non-streaming /run endpoint — avoids chunked proxy issues
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                resp = await client.post(
-                    f"{settings.langgraph_url}/run",
-                    json=payload,
-                )
+
+        # Run LangGraph pipeline as a background task while streaming keepalives
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            lg_task = asyncio.create_task(
+                client.post(f"{settings.langgraph_url}/run", json=payload)
+            )
+            try:
+                while not lg_task.done():
+                    await asyncio.sleep(10)
+                    if not lg_task.done():
+                        yield f"data: {json.dumps({'node': 'ping'})}\n\n"
+                resp = await lg_task
                 resp.raise_for_status()
                 result = resp.json()
-            # Emit events that the frontend expects
-            if result.get("transcript"):
-                yield f"event: transcribe\ndata: {json.dumps({'node': 'transcribe', 'transcript': result['transcript']})}\n\n"
-            # Always emit rank event (even empty list) so frontend can transition out of "searching"
-            ranked_slots = result.get("ranked_slots") or []
-            if result.get("error"):
-                yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
-            else:
-                yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
-        except Exception as e:
-            logger.error("Pipeline stream failed: %s", e)
-            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+            except Exception as e:
+                logger.error("Pipeline stream failed: %s", e)
+                yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+                return
+
+        # Emit result events
+        if result.get("transcript"):
+            yield f"data: {json.dumps({'node': 'transcribe', 'transcript': result['transcript']})}\n\n"
+        ranked_slots = result.get("ranked_slots") or []
+        if result.get("error"):
+            yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
+        else:
+            yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
 
     return StreamingResponse(
         _stream(),
@@ -164,23 +171,29 @@ async def process_text_stream(
 
     async def _stream():
         yield f"data: {json.dumps({'run_id': run_id, 'node': 'init'})}\n\n"
-        try:
-            # Call LangGraph non-streaming /run endpoint — avoids chunked proxy issues
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                resp = await client.post(
-                    f"{settings.langgraph_url}/run/text",
-                    json=payload,
-                )
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            lg_task = asyncio.create_task(
+                client.post(f"{settings.langgraph_url}/run/text", json=payload)
+            )
+            try:
+                while not lg_task.done():
+                    await asyncio.sleep(10)
+                    if not lg_task.done():
+                        yield f"data: {json.dumps({'node': 'ping'})}\n\n"
+                resp = await lg_task
                 resp.raise_for_status()
                 result = resp.json()
-            ranked_slots = result.get("ranked_slots") or []
-            if result.get("error"):
-                yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
-            else:
-                yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
-        except Exception as e:
-            logger.error("Text pipeline stream failed: %s", e)
-            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+            except Exception as e:
+                logger.error("Text pipeline stream failed: %s", e)
+                yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+                return
+
+        ranked_slots = result.get("ranked_slots") or []
+        if result.get("error"):
+            yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
+        else:
+            yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
 
     return StreamingResponse(
         _stream(),
