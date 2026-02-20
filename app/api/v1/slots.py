@@ -14,7 +14,8 @@ from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
 from app.services import claude_svc, gdocs_svc, notion_svc, slack_svc, vector_svc
-from app.utils.embeddings import embed_text
+from app.services.vector_svc import CustomIndexCreds
+from app.utils.embeddings import CustomBedrockCreds, embed_text
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +89,25 @@ async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: s
     return ""
 
 
+def _resolve_custom_creds(user: User) -> tuple[CustomIndexCreds | None, CustomBedrockCreds | None]:
+    """Extract decrypted custom index + bedrock creds from the user if configured and ready."""
+    cfg = user.custom_index
+    if not cfg or cfg.index_status not in ("ready",):
+        return None, None
+    custom_index = CustomIndexCreds(
+        pinecone_api_key=decrypt_token(cfg.pinecone_api_key),
+        index_name=cfg.index_name,
+    )
+    custom_bedrock = None
+    if cfg.bedrock_aws_access_key_id and cfg.bedrock_aws_secret_access_key:
+        custom_bedrock = CustomBedrockCreds(
+            aws_access_key_id=decrypt_token(cfg.bedrock_aws_access_key_id),
+            aws_secret_access_key=decrypt_token(cfg.bedrock_aws_secret_access_key),
+            aws_region=cfg.bedrock_aws_region or "us-east-1",
+        )
+    return custom_index, custom_bedrock
+
+
 async def _embed_and_enrich_slot(
     slot_id: str,
     user_id: str,
@@ -100,6 +120,17 @@ async def _embed_and_enrich_slot(
     slot = await KnowledgeSlot.get(PydanticObjectId(slot_id))
     if not slot:
         return
+
+    # Resolve custom index/bedrock creds from user config
+    user = await User.get(PydanticObjectId(user_id))
+    custom_index, custom_bedrock = _resolve_custom_creds(user) if user else (None, None)
+
+    # Check if custom index was deleted before we try to use it
+    if custom_index and not await asyncio.to_thread(vector_svc.check_custom_index_exists, custom_index):
+        if user and user.custom_index:
+            user.custom_index.index_status = "deleted"
+            await user.save()
+        custom_index = None  # Fall back to shared index
 
     # Step 1: read & summarize resource content if user opted in
     if slot.read_content:
@@ -132,8 +163,8 @@ async def _embed_and_enrich_slot(
     # Step 3: embed and upsert to Pinecone, then mark indexed
     try:
         source = await Source.get(slot.source_id)
-        summary_vec, content_vec = await _embed_slot(slot, source)
-        vector_svc.upsert_slot(slot, summary_vec, content_vec)
+        summary_vec, content_vec = await _embed_slot(slot, source, custom_bedrock)
+        vector_svc.upsert_slot(slot, summary_vec, content_vec, custom_index)
         slot.index_status = "indexed"
         await slot.save()
         logger.info("Vector upsert complete for slot %s", slot_id)
@@ -246,10 +277,11 @@ async def update_slot(
     slot.updated_at = datetime.now(timezone.utc)
     await slot.save()
 
+    custom_index, custom_bedrock = _resolve_custom_creds(current_user)
     try:
         source = await Source.get(slot.source_id)
-        summary_vec, content_vec = await _embed_slot(slot, source)
-        vector_svc.upsert_slot(slot, summary_vec, content_vec)
+        summary_vec, content_vec = await _embed_slot(slot, source, custom_bedrock)
+        vector_svc.upsert_slot(slot, summary_vec, content_vec, custom_index)
     except Exception:
         logger.exception("vector upsert failed for slot %s", slot.id)
 
@@ -268,20 +300,25 @@ async def delete_slot(
     if not slot:
         raise NotFoundError("Slot not found")
 
-    slot.is_active = False
-    slot.updated_at = datetime.now(timezone.utc)
-    await slot.save()
+    slot_id_str = str(slot.id)
+
+    await slot.delete()
 
     current_user.usage.slots_count = max(0, current_user.usage.slots_count - 1)
     await current_user.save()
 
+    custom_index, _ = _resolve_custom_creds(current_user)
     try:
-        vector_svc.delete_slot(str(slot.id))
+        vector_svc.delete_slot(slot_id_str, custom_index)
     except Exception:
-        logger.exception("vector delete failed for slot %s", slot.id)
+        logger.exception("vector delete failed for slot %s", slot_id_str)
 
 
-async def _embed_slot(slot: KnowledgeSlot, source: Source | None = None) -> tuple[list[float], list[float]]:
+async def _embed_slot(
+    slot: KnowledgeSlot,
+    source: Source | None = None,
+    custom_bedrock: CustomBedrockCreds | None = None,
+) -> tuple[list[float], list[float]]:
     # Include source context in the embedding text for better routing
     source_context = ""
     if source:
@@ -292,7 +329,7 @@ async def _embed_slot(slot: KnowledgeSlot, source: Source | None = None) -> tupl
     content_text = source_context + (slot.content_sample or slot.description)
 
     summary_vec, content_vec = await asyncio.gather(
-        embed_text(summary_text),
-        embed_text(content_text),
+        embed_text(summary_text, custom_bedrock),
+        embed_text(content_text, custom_bedrock),
     )
     return summary_vec, content_vec

@@ -88,20 +88,20 @@ async def infer_slot_metadata(slot_name: str, source_name: str, provider: str) -
 def _summarize_slot_content_sync(slot_name: str, raw_content: str) -> str:
     """Summarize raw resource content into a concise indexing-ready passage."""
     client = _get_client()
-    truncated = raw_content[:6000]
+    truncated = raw_content[:100000]
     prompt = f"""You are preparing a knowledge index entry.
 
 Slot name: "{slot_name}"
-Resource content (excerpt):
+Resource content:
 ---
 {truncated}
 ---
 
-Write a concise summary (150-200 words) of what this resource is about and what kind of notes or information typically belong here. Focus on topic, purpose, and key themes — not a full transcription. Output plain text only, no markdown."""
+Write a comprehensive summary (500-700 words) of what this resource is about and what kind of notes or information typically belong here. Cover the topic, purpose, key themes, recurring subjects, notable structure, categories, and any specific terminology or concepts present. The richer this summary, the better the search experience for the user. Output plain text only, no markdown."""
 
     body = json.dumps({
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 300,
+        "max_tokens": 1024,
         "messages": [{"role": "user", "content": prompt}],
     })
     response = client.invoke_model(

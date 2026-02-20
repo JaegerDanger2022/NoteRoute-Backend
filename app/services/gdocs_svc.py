@@ -127,12 +127,9 @@ def _append_content_sync(document_id: str, content: str, access_token: str) -> N
     ).execute()
 
 
-def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: int = 4000) -> str:
-    """Extract plain text from a Google Doc, capped at max_chars."""
-    docs_service = _build_docs(access_token)
-    doc = docs_service.documents().get(documentId=document_id).execute()
-    parts = []
-    for element in doc.get("body", {}).get("content", []):
+def _extract_body_text(body_content: list, parts: list, max_chars: int) -> bool:
+    """Append text from a body content list into parts. Returns True if max_chars reached."""
+    for element in body_content:
         paragraph = element.get("paragraph")
         if not paragraph:
             continue
@@ -141,11 +138,38 @@ def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: in
             if text_run:
                 parts.append(text_run.get("content", ""))
         if sum(len(p) for p in parts) >= max_chars:
-            break
+            return True
+    return False
+
+
+def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: int = 100000) -> str:
+    """Extract plain text from a Google Doc (all tabs if present), capped at max_chars."""
+    docs_service = _build_docs(access_token)
+    doc = docs_service.documents().get(documentId=document_id, includeTabsContent=True).execute()
+    parts: list[str] = []
+
+    tabs = doc.get("tabs")
+    if tabs:
+        # Multi-tab document — walk every tab recursively
+        def _walk_tabs(tab_list: list) -> bool:
+            for tab in tab_list:
+                body_content = (
+                    tab.get("documentTab", {}).get("body", {}).get("content", [])
+                )
+                if _extract_body_text(body_content, parts, max_chars):
+                    return True
+                child_tabs = tab.get("childTabs", [])
+                if child_tabs and _walk_tabs(child_tabs):
+                    return True
+            return False
+        _walk_tabs(tabs)
+    else:
+        _extract_body_text(doc.get("body", {}).get("content", []), parts, max_chars)
+
     return "".join(parts)[:max_chars].strip()
 
 
-async def fetch_document_text(document_id: str, access_token: str, max_chars: int = 4000) -> str:
+async def fetch_document_text(document_id: str, access_token: str, max_chars: int = 100000) -> str:
     return await asyncio.to_thread(_fetch_document_text_sync, document_id, access_token, max_chars)
 
 

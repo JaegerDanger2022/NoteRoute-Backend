@@ -37,10 +37,10 @@ def _post_message_sync(channel_id: str, content: str, access_token: str) -> None
     client.chat_postMessage(channel=channel_id, text=content)
 
 
-def _fetch_channel_messages_sync(channel_id: str, access_token: str, max_chars: int = 4000) -> str:
+def _fetch_channel_messages_sync(channel_id: str, access_token: str, max_chars: int = 50000) -> str:
     """Fetch recent messages from a Slack channel as plain text, capped at max_chars."""
     client = WebClient(token=access_token)
-    resp = client.conversations_history(channel=channel_id, limit=50)
+    resp = client.conversations_history(channel=channel_id, limit=200)
     lines = []
     for msg in resp.get("messages", []):
         text = msg.get("text", "").strip()
@@ -51,7 +51,7 @@ def _fetch_channel_messages_sync(channel_id: str, access_token: str, max_chars: 
     return "\n".join(lines)[:max_chars]
 
 
-async def fetch_channel_messages(channel_id: str, access_token: str, max_chars: int = 4000) -> str:
+async def fetch_channel_messages(channel_id: str, access_token: str, max_chars: int = 50000) -> str:
     return await asyncio.to_thread(_fetch_channel_messages_sync, channel_id, access_token, max_chars)
 
 

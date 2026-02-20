@@ -81,17 +81,27 @@ async def append_block(page_id: str, content: str, access_token: str) -> None:
     )
 
 
-async def fetch_page_text(page_id: str, access_token: str, max_chars: int = 4000) -> str:
-    """Fetch plain text from a Notion page's blocks (top-level only), capped at max_chars."""
+async def fetch_page_text(page_id: str, access_token: str, max_chars: int = 100000) -> str:
+    """Fetch plain text from a Notion page's blocks (paginated), capped at max_chars."""
     client = AsyncClient(auth=access_token)
-    resp = await client.blocks.children.list(block_id=page_id, page_size=50)
     parts = []
-    for block in resp.get("results", []):
-        text = _extract_block_text(block)
-        if text:
-            parts.append(text)
-        if sum(len(p) for p in parts) >= max_chars:
+    cursor = None
+
+    while True:
+        kwargs: dict = {"block_id": page_id, "page_size": 100}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        resp = await client.blocks.children.list(**kwargs)
+        for block in resp.get("results", []):
+            text = _extract_block_text(block)
+            if text:
+                parts.append(text)
+            if sum(len(p) for p in parts) >= max_chars:
+                return "\n".join(parts)[:max_chars]
+        if not resp.get("has_more"):
             break
+        cursor = resp.get("next_cursor")
+
     return "\n".join(parts)[:max_chars]
 
 
