@@ -53,6 +53,7 @@ class DeliverRequest(BaseModel):
     user_id: str
     save_as_slot: bool = False
     target_tab_id: str | None = None
+    doc_title: str | None = None
 
 
 @router.post("")
@@ -74,7 +75,7 @@ async def deliver(body: DeliverRequest) -> dict:
 
     try:
         if body.save_as_slot:
-            result = await _save_as_new_slot(user, body.content, body.summary, route)
+            result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title)
         else:
             result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id)
 
@@ -146,6 +147,7 @@ async def _save_as_new_slot(
     content: str,
     summary: str,
     route: Route,
+    doc_title: str | None = None,
 ) -> dict:
     """Create a new resource in the provider + save it as a KnowledgeSlot."""
     if not user.active_source_id:
@@ -165,10 +167,11 @@ async def _save_as_new_slot(
 
     access_token = await _get_access_token(integration)
 
-    # Title from summary (first 60 chars) or first line of content
-    title = (summary or content)[:60].strip()
-    if not title:
-        title = "Note"
+    # User-provided title takes priority; fall back to summary/content
+    if doc_title and doc_title.strip():
+        title = doc_title.strip()[:120]
+    else:
+        title = (summary or content)[:60].strip() or "Note"
 
     # Create the resource in the provider
     if source.provider == "notion":
