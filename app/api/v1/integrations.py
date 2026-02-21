@@ -105,8 +105,10 @@ async def connect_integration(
         from urllib.parse import quote
         # Trello returns the token as a URL *fragment* (#token=...) appended to return_url.
         # Point directly to the NextJS trello-callback page so the browser can read the hash.
+        # Only encode the state param value, not the whole URL — Trello validates the return_url
+        # origin against allowed origins and rejects if the scheme/host is percent-encoded.
         trello_callback_page = f"{settings.WEB_APP_URL}/oauth/trello-callback"
-        return_url = quote(f"{trello_callback_page}?state={state}", safe="")
+        return_url = f"{trello_callback_page}?state={quote(state, safe='')}"
         url = (
             f"{_TRELLO_AUTH_URL}"
             f"?key={settings.TRELLO_API_KEY}"
@@ -114,7 +116,7 @@ async def connect_integration(
             f"&expiration=never"
             f"&scope=read,write"
             f"&response_type=token"
-            f"&return_url={return_url}"
+            f"&return_url={quote(return_url, safe=':/?=&')}"
         )
         return {"status": "redirect", "provider": "trello", "url": url}
 
