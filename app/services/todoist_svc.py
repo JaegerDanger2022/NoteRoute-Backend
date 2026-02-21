@@ -12,11 +12,18 @@ def _headers(access_token: str) -> dict:
 
 
 async def get_user_info(access_token: str) -> dict:
-    """Return the authenticated Todoist user's identity: {id, name, email}."""
+    """Return the authenticated Todoist user's identity: {id, name, email}.
+
+    Uses the Sync API v9 because REST v2 has no /user endpoint.
+    """
     async with httpx.AsyncClient() as client:
-        resp = await client.get(f"{_BASE}/user", headers=_headers(access_token))
+        resp = await client.post(
+            "https://api.todoist.com/sync/v9/sync",
+            headers=_headers(access_token),
+            data={"sync_token": "*", "resource_types": '["user"]'},
+        )
         resp.raise_for_status()
-        user = resp.json()
+        user = resp.json().get("user", {})
     return {
         "id": str(user.get("id", "unknown")),
         "name": user.get("full_name", "Todoist User"),
