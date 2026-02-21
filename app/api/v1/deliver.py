@@ -135,7 +135,9 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         await slack_svc.post_message(slot.destination.resource_id, content, access_token)
     elif source.provider == "todoist":
         resource_id = slot.destination.resource_id
-        task_title = (summary or content[:100]).strip() or "Note"
+        # Use first sentence / first 80 chars of transcript as title; full transcript as body
+        first_sentence = content.split(".")[0].strip()
+        task_title = (first_sentence[:80] if first_sentence else content[:80]).strip() or "Note"
         if " > " in (slot.destination.resource_name or ""):
             await todoist_svc.create_task(task_title, content, access_token, section_id=resource_id)
         else:
@@ -237,7 +239,10 @@ async def _save_as_new_slot(
         target = inbox or (projects[0] if projects else None)
         if not target:
             raise ValueError("No Todoist projects found")
-        task = await todoist_svc.create_task(title, content, access_token, project_id=target["id"])
+        # Use first sentence / first 80 chars of transcript as title; full transcript as body
+        first_sentence = content.split(".")[0].strip()
+        task_title = (first_sentence[:80] if first_sentence else content[:80]).strip() or "Note"
+        task = await todoist_svc.create_task(task_title, content, access_token, project_id=target["id"])
         resource = {"id": task["id"], "name": task["name"], "url": task.get("url")}
     elif source.provider == "trello":
         # Save to the first list of the first board

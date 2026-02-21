@@ -8,7 +8,7 @@ from pydantic import Field
 
 class Source(Document):
     user_id: PydanticObjectId
-    provider: Literal["notion", "google", "slack", "todoist"]
+    provider: Literal["notion", "google", "slack", "todoist", "trello"]
     name: str
     tags: list[str] = []
     connected_account_email: str | None = None

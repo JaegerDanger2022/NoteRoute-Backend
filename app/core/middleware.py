@@ -13,10 +13,13 @@ logger = logging.getLogger(__name__)
 
 # Paths that don't require authentication
 _PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
-# Path prefixes that don't require authentication (OAuth callbacks come from Google/Slack servers)
+# Path prefixes that don't require authentication (OAuth callbacks come from provider servers)
 _PUBLIC_PREFIXES = (
+    "/api/v1/integrations/notion/callback",
     "/api/v1/integrations/google/callback",
     "/api/v1/integrations/slack/callback",
+    "/api/v1/integrations/todoist/callback",
+    "/api/v1/integrations/trello/callback",
     "/api/v1/users/internal/",
     "/api/v1/slots/internal/",
     "/api/v1/deliver",

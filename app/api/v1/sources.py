@@ -210,18 +210,8 @@ async def list_resources(
     elif source.provider == "slack":
         return await slack_svc.list_channels(access_token)
     elif source.provider == "todoist":
-        projects = await todoist_svc.list_projects(access_token)
-        resources = []
-        for project in projects:
-            resources.append(project)
-            sections = await todoist_svc.list_sections(project["id"], access_token)
-            for section in sections:
-                resources.append({
-                    "id": section["id"],
-                    "name": f"{project['name']} > {section['name']}",
-                    "url": None,
-                })
-        return resources
+        # Only return projects — sections are fetched on-demand via /children
+        return await todoist_svc.list_projects(access_token)
     elif source.provider == "trello":
         boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
         resources = []
@@ -236,3 +226,37 @@ async def list_resources(
         return resources
     else:
         raise NotFoundError(f"Unknown provider: {source.provider}")
+
+
+@router.get("/{source_id}/resources/{resource_id}/children")
+async def list_resource_children(
+    source_id: PydanticObjectId,
+    resource_id: str,
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Return child resources for a given resource (e.g. sections under a Todoist project)."""
+    source = await Source.find_one(
+        Source.id == source_id,
+        Source.user_id == current_user.id,
+        Source.is_active == True,
+    )
+    if not source:
+        raise NotFoundError("Source not found")
+
+    integration = await Integration.find_one(
+        Integration.user_id == current_user.id,
+        Integration.provider == source.provider,
+        Integration.is_active == True,
+    )
+    if not integration:
+        raise NotFoundError(f"No active {source.provider} integration found")
+
+    if source.provider == "google":
+        access_token = await _get_fresh_google_token(integration)
+    else:
+        access_token = decrypt_token(integration.tokens.access_token)
+
+    if source.provider == "todoist":
+        return await todoist_svc.list_sections(resource_id, access_token)
+
+    return []

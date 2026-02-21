@@ -64,7 +64,12 @@ async def list_slots(
     source_id: str | None = None,
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
-    query = [KnowledgeSlot.user_id == current_user.id, KnowledgeSlot.is_active == True]
+    # Only return primary slots — section children (parent_slot_id set) are internal
+    query = [
+        KnowledgeSlot.user_id == current_user.id,
+        KnowledgeSlot.is_active == True,
+        KnowledgeSlot.parent_slot_id == None,
+    ]
     if source_id:
         query.append(KnowledgeSlot.source_id == PydanticObjectId(source_id))
     slots = await KnowledgeSlot.find(*query).to_list()
@@ -230,6 +235,48 @@ async def _embed_and_enrich_slot(
             pass
 
 
+async def _build_todoist_section_slots(
+    project_resource: SlotDestination,
+    project_name: str,
+    source_id: PydanticObjectId,
+    user_id,
+    parent_slot_id: PydanticObjectId,
+    tags: list[str],
+    read_content: bool,
+    access_token: str,
+) -> list[KnowledgeSlot]:
+    """Return unsaved KnowledgeSlot objects for every section under a Todoist project.
+
+    Section slots are owned by the project slot (parent_slot_id) and do NOT
+    count toward the user's slot quota — the project slot counts as 1.
+    """
+    try:
+        sections = await todoist_svc.list_sections(project_resource.resource_id, access_token)
+    except Exception:
+        logger.warning("Could not fetch sections for Todoist project %s", project_resource.resource_id)
+        return []
+
+    slots = []
+    for section in sections:
+        section_name = f"{project_name} > {section['name']}"
+        slots.append(KnowledgeSlot(
+            user_id=user_id,
+            source_id=source_id,
+            parent_slot_id=parent_slot_id,
+            name=section_name,
+            description=section_name,
+            content_sample="",
+            destination=SlotDestination(
+                resource_id=section["id"],
+                resource_name=section_name,
+                resource_url=None,
+            ),
+            tags=tags,
+            read_content=read_content,
+        ))
+    return slots
+
+
 @router.post("", status_code=201)
 async def create_slot(
     body: SlotCreateRequest,
@@ -261,8 +308,33 @@ async def create_slot(
         read_content=body.read_content,
     )
     await slot.insert()
-
     current_user.usage.slots_count += 1
+
+    # For Todoist project slots (not sections), also create child slots for all sections.
+    # Section slots share the project slot's quota entry — they don't add to slots_count.
+    extra_slots: list[KnowledgeSlot] = []
+    if source.provider == "todoist" and " > " not in (body.destination.resource_name or ""):
+        integration = await Integration.find_one(
+            Integration.user_id == current_user.id,
+            Integration.provider == "todoist",
+            Integration.is_active == True,
+        )
+        if integration:
+            from app.core.security import decrypt_token as _decrypt
+            access_token = _decrypt(integration.tokens.access_token)
+            extra_slots = await _build_todoist_section_slots(
+                body.destination,
+                body.name,
+                source_id,
+                current_user.id,
+                slot.id,
+                body.tags,
+                body.read_content,
+                access_token,
+            )
+            for s in extra_slots:
+                await s.insert()
+
     await current_user.save()
 
     # Embedding + enrich always run in background so the response is fast
@@ -277,6 +349,16 @@ async def create_slot(
         user_provided_description,
         user_provided_tags,
     )
+    for s in extra_slots:
+        background_tasks.add_task(
+            _embed_and_enrich_slot,
+            str(s.id),
+            str(current_user.id),
+            source.name,
+            source.provider,
+            False,
+            bool(body.tags),
+        )
 
     return _slot_to_dict(slot)
 
@@ -354,13 +436,28 @@ async def delete_slot(
         raise NotFoundError("Slot not found")
 
     slot_id_str = str(slot.id)
+    custom_index, _, _llm = _resolve_custom_creds(current_user)
+
+    # Cascade-delete child section slots (Todoist project slots own their sections)
+    child_slots = await KnowledgeSlot.find(
+        KnowledgeSlot.parent_slot_id == slot.id,
+        KnowledgeSlot.user_id == current_user.id,
+    ).to_list()
+    for child in child_slots:
+        child_id_str = str(child.id)
+        await child.delete()
+        try:
+            vector_svc.delete_slot(child_id_str, custom_index)
+        except Exception:
+            logger.exception("vector delete failed for child slot %s", child_id_str)
 
     await slot.delete()
 
-    current_user.usage.slots_count = max(0, current_user.usage.slots_count - 1)
+    # Only decrement once — section slots don't count toward the quota
+    if slot.parent_slot_id is None:
+        current_user.usage.slots_count = max(0, current_user.usage.slots_count - 1)
     await current_user.save()
 
-    custom_index, _, _llm = _resolve_custom_creds(current_user)
     try:
         vector_svc.delete_slot(slot_id_str, custom_index)
     except Exception:

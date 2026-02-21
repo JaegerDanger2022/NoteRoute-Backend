@@ -4,7 +4,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://api.todoist.com/rest/v2"
+_BASE = "https://api.todoist.com/api/v1"
 
 
 def _headers(access_token: str) -> dict:
@@ -14,16 +14,16 @@ def _headers(access_token: str) -> dict:
 async def get_user_info(access_token: str) -> dict:
     """Return the authenticated Todoist user's identity: {id, name, email}.
 
-    Uses the Sync API v9 because REST v2 has no /user endpoint.
+    Uses the API v1 /user endpoint (REST v2 has no /user endpoint;
+    Sync API v9 /sync returns 410 Gone).
     """
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            "https://api.todoist.com/sync/v9/sync",
+        resp = await client.get(
+            "https://api.todoist.com/api/v1/user",
             headers=_headers(access_token),
-            data={"sync_token": "*", "resource_types": '["user"]'},
         )
         resp.raise_for_status()
-        user = resp.json().get("user", {})
+        user = resp.json()
     return {
         "id": str(user.get("id", "unknown")),
         "name": user.get("full_name", "Todoist User"),
@@ -36,7 +36,9 @@ async def list_projects(access_token: str) -> list[dict]:
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{_BASE}/projects", headers=_headers(access_token))
         resp.raise_for_status()
-        projects = resp.json()
+        data = resp.json()
+    # API v1 returns a paginated wrapper: {"results": [...], "next_cursor": ...}
+    projects = data.get("results", data) if isinstance(data, dict) else data
     return [
         {
             "id": str(p["id"]),
@@ -57,7 +59,9 @@ async def list_sections(project_id: str, access_token: str) -> list[dict]:
             headers=_headers(access_token),
         )
         resp.raise_for_status()
-        sections = resp.json()
+        data = resp.json()
+    # API v1 returns a paginated wrapper: {"results": [...], "next_cursor": ...}
+    sections = data.get("results", data) if isinstance(data, dict) else data
     return [
         {
             "id": str(s["id"]),
@@ -116,7 +120,9 @@ async def fetch_project_tasks(
             headers=_headers(access_token),
         )
         resp.raise_for_status()
-        tasks = resp.json()
+        data = resp.json()
+    # API v1 returns a paginated wrapper: {"results": [...], "next_cursor": ...}
+    tasks = data.get("results", data) if isinstance(data, dict) else data
 
     lines = []
     total = 0

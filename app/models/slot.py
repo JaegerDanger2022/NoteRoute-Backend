@@ -15,6 +15,7 @@ class SlotDestination(BaseModel):
 class KnowledgeSlot(Document):
     user_id: PydanticObjectId
     source_id: PydanticObjectId
+    parent_slot_id: PydanticObjectId | None = None  # set on section slots owned by a project slot
     name: str
     description: str
     content_sample: str = ""
