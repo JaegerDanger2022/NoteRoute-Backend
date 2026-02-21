@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
+from app.config import settings
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.core.security import decrypt_token, encrypt_token
 from app.models.integration import Integration
 from app.models.slot import KnowledgeSlot
 from app.models.source import Source
 from app.models.user import User
-from app.services import gdocs_svc, notion_svc, slack_svc
+from app.services import gdocs_svc, notion_svc, slack_svc, todoist_svc, trello_svc
 
 logger = logging.getLogger(__name__)
 
@@ -208,5 +209,30 @@ async def list_resources(
         return await gdocs_svc.list_documents(access_token)
     elif source.provider == "slack":
         return await slack_svc.list_channels(access_token)
+    elif source.provider == "todoist":
+        projects = await todoist_svc.list_projects(access_token)
+        resources = []
+        for project in projects:
+            resources.append(project)
+            sections = await todoist_svc.list_sections(project["id"], access_token)
+            for section in sections:
+                resources.append({
+                    "id": section["id"],
+                    "name": f"{project['name']} > {section['name']}",
+                    "url": None,
+                })
+        return resources
+    elif source.provider == "trello":
+        boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
+        resources = []
+        for board in boards:
+            lists = await trello_svc.list_lists(board["id"], settings.TRELLO_API_KEY, access_token)
+            for lst in lists:
+                resources.append({
+                    "id": lst["id"],
+                    "name": f"{board['name']} > {lst['name']}",
+                    "url": board.get("url"),
+                })
+        return resources
     else:
         raise NotFoundError(f"Unknown provider: {source.provider}")

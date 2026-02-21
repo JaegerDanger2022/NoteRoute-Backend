@@ -30,6 +30,12 @@ _GOOGLE_WRITE_SCOPE = "https://www.googleapis.com/auth/documents"
 
 _SLACK_SCOPES = "channels:read,chat:write"
 
+_TODOIST_AUTH_URL = "https://todoist.com/oauth/authorize"
+_TODOIST_TOKEN_URL = "https://todoist.com/oauth/access_token"
+_TODOIST_SCOPES = "data:read_write"
+
+_TRELLO_AUTH_URL = "https://trello.com/1/authorize"
+
 
 @router.get("/{provider}/connect", response_model=None)
 async def connect_integration(
@@ -53,8 +59,15 @@ async def connect_integration(
         state += "|web"
 
     if provider == "notion":
-        await _store_notion_internal(current_user)
-        return {"status": "connected", "provider": "notion"}
+        url = (
+            "https://api.notion.com/v1/oauth/authorize"
+            f"?client_id={settings.NOTION_CLIENT_ID}"
+            f"&response_type=code"
+            f"&owner=user"
+            f"&redirect_uri={settings.NOTION_REDIRECT_URI}"
+            f"&state={state}"
+        )
+        return {"status": "redirect", "provider": "notion", "url": url}
 
     elif provider == "google":
         url = (
@@ -78,6 +91,29 @@ async def connect_integration(
             f"&state={state}"
         )
         return {"status": "redirect", "provider": "slack", "url": url}
+
+    elif provider == "todoist":
+        url = (
+            f"{_TODOIST_AUTH_URL}"
+            f"?client_id={settings.TODOIST_CLIENT_ID}"
+            f"&scope={_TODOIST_SCOPES}"
+            f"&state={state}"
+        )
+        return {"status": "redirect", "provider": "todoist", "url": url}
+
+    elif provider == "trello":
+        from urllib.parse import quote
+        return_url = quote(f"{settings.TRELLO_REDIRECT_URI}?state={state}", safe="")
+        url = (
+            f"{_TRELLO_AUTH_URL}"
+            f"?key={settings.TRELLO_API_KEY}"
+            f"&name=NoteRoute"
+            f"&expiration=never"
+            f"&scope=read,write"
+            f"&response_type=token"
+            f"&return_url={return_url}"
+        )
+        return {"status": "redirect", "provider": "trello", "url": url}
 
     else:
         raise NotFoundError(f"Unknown provider: {provider}")
@@ -141,6 +177,19 @@ async def google_has_write(
     return {"has_write": has_write}
 
 
+@router.get("/trello/callback", response_model=None)
+async def trello_callback(token: str, state: str) -> RedirectResponse:
+    """Handle Trello's token redirect — Trello returns ?token=... not ?code=..."""
+    is_web = "|web" in state
+    await _handle_trello_callback(token, state)
+
+    if is_web:
+        web_url = f"{settings.WEB_APP_URL}/oauth/callback?provider=trello&status=success"
+        return RedirectResponse(url=web_url, status_code=302)
+
+    return RedirectResponse(url="noteroute://oauth/success?provider=trello", status_code=302)
+
+
 @router.get("/{provider}/callback", response_model=None)
 async def oauth_callback(provider: str, code: str, state: str) -> RedirectResponse:
     """Handle OAuth callback — exchange code for tokens, store encrypted, redirect to app.
@@ -154,10 +203,14 @@ async def oauth_callback(provider: str, code: str, state: str) -> RedirectRespon
     is_upgrade = state.endswith("__upgrade") or "|web__upgrade" in state
     is_web = "|web" in state
 
-    if provider == "google":
+    if provider == "notion":
+        await _handle_notion_callback(code, state)
+    elif provider == "google":
         await _handle_google_callback(code, state)
     elif provider == "slack":
         await _handle_slack_callback(code, state)
+    elif provider == "todoist":
+        await _handle_todoist_callback(code, state)
     else:
         raise NotFoundError(f"Unknown provider: {provider}")
 
@@ -212,54 +265,62 @@ async def disconnect_integration(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-async def _store_notion_internal(user: User) -> None:
-    """Store the shared internal Notion token and upsert a Source for the user."""
-    token = settings.NOTION_INTEGRATION_TOKEN
-    workspace_name = None
-    bot_id = "internal"
+async def _handle_notion_callback(code: str, state: str) -> None:
+    """Exchange Notion auth code for a per-user OAuth token, store, upsert Source."""
+    raw_user_id = state.removesuffix("__upgrade").split("|")[0]
 
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://api.notion.com/v1/users/me",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Notion-Version": "2022-06-28",
+        token_resp = await client.post(
+            "https://api.notion.com/v1/oauth/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.NOTION_REDIRECT_URI,
             },
+            auth=(settings.NOTION_CLIENT_ID, settings.NOTION_CLIENT_SECRET),
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            bot_id = (
-                data.get("bot", {}).get("owner", {}).get("workspace_name", "internal")
-                or "internal"
-            )
-            workspace_name = data.get("bot", {}).get("owner", {}).get("workspace_name")
+        token_resp.raise_for_status()
+        data = token_resp.json()
 
-    encrypted = encrypt_token(token)
+    access_token = data["access_token"]
+    workspace_name = data.get("workspace_name")
+    bot_id = data.get("bot_id", "unknown")
+    owner = data.get("owner", {})
+    person = owner.get("person", {})
+    provider_email = person.get("email")
+
+    user_id = PydanticObjectId(raw_user_id)
+    user = await User.get(user_id)
+    if not user:
+        return
+
+    encrypted = encrypt_token(access_token)
     existing = await Integration.find_one(
-        Integration.user_id == user.id,
+        Integration.user_id == user_id,
         Integration.provider == "notion",
     )
     if existing:
         existing.tokens.access_token = encrypted
-        existing.is_active = True
+        existing.provider_email = provider_email
         existing.workspace_name = workspace_name
+        existing.is_active = True
         await existing.save()
     else:
-        integration = Integration(
-            user_id=user.id,
+        await Integration(
+            user_id=user_id,
             provider="notion",
             tokens=OAuthTokens(access_token=encrypted),
             provider_user_id=bot_id,
+            provider_email=provider_email,
             workspace_name=workspace_name,
-        )
-        await integration.insert()
+        ).insert()
 
     await _upsert_source(
         user=user,
         provider="notion",
         name=workspace_name or "Notion Workspace",
         connected_account_id=bot_id,
-        connected_account_email=None,
+        connected_account_email=provider_email,
     )
 
 
@@ -429,3 +490,121 @@ async def _upsert_source(
         ).insert()
         user.usage.sources_count += 1
         await user.save()
+
+
+async def _handle_trello_callback(token: str, state: str) -> None:
+    """Store Trello OAuth token, fetch user info, upsert Integration + Source.
+
+    Trello issues a single long-lived token (no refresh, no expiry).
+    The token is used alongside the static TRELLO_API_KEY for all API calls.
+    """
+    from app.services import trello_svc
+
+    raw_user_id = state.split("|")[0]
+
+    user_info = await trello_svc.get_user_info(settings.TRELLO_API_KEY, token)
+
+    provider_user_id = user_info["id"]
+    provider_email = user_info.get("email")
+    display_name = user_info["name"]
+
+    user_id = PydanticObjectId(raw_user_id)
+    user = await User.get(user_id)
+    if not user:
+        return
+
+    encrypted = encrypt_token(token)
+    existing = await Integration.find_one(
+        Integration.user_id == user_id,
+        Integration.provider == "trello",
+    )
+
+    if existing:
+        existing.tokens.access_token = encrypted
+        existing.provider_email = provider_email
+        existing.workspace_name = display_name
+        existing.is_active = True
+        await existing.save()
+    else:
+        await Integration(
+            user_id=user_id,
+            provider="trello",
+            tokens=OAuthTokens(access_token=encrypted),
+            provider_user_id=provider_user_id,
+            provider_email=provider_email,
+            workspace_name=display_name,
+        ).insert()
+
+    await _upsert_source(
+        user=user,
+        provider="trello",
+        name=f"{display_name}'s Trello",
+        connected_account_id=provider_user_id,
+        connected_account_email=provider_email,
+    )
+
+
+async def _handle_todoist_callback(code: str, state: str) -> None:
+    """Exchange Todoist auth code for access token, store, upsert Source.
+
+    Todoist issues a single long-lived bearer token (no refresh token, no expiry).
+    """
+    from app.services import todoist_svc
+
+    raw_user_id = state.split("|")[0]
+
+    async with httpx.AsyncClient() as client:
+        token_resp = await client.post(
+            _TODOIST_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": settings.TODOIST_CLIENT_ID,
+                "client_secret": settings.TODOIST_CLIENT_SECRET,
+                "redirect_uri": settings.TODOIST_REDIRECT_URI,
+                "grant_type": "authorization_code",
+            },
+        )
+        token_resp.raise_for_status()
+        data = token_resp.json()
+
+    access_token = data["access_token"]
+    user_info = await todoist_svc.get_user_info(access_token)
+
+    provider_user_id = user_info["id"]
+    provider_email = user_info["email"]
+    display_name = user_info["name"]
+
+    user_id = PydanticObjectId(raw_user_id)
+    user = await User.get(user_id)
+    if not user:
+        return
+
+    encrypted = encrypt_token(access_token)
+    existing = await Integration.find_one(
+        Integration.user_id == user_id,
+        Integration.provider == "todoist",
+    )
+
+    if existing:
+        existing.tokens.access_token = encrypted
+        existing.provider_email = provider_email
+        existing.workspace_name = display_name
+        existing.is_active = True
+        await existing.save()
+    else:
+        await Integration(
+            user_id=user_id,
+            provider="todoist",
+            tokens=OAuthTokens(access_token=encrypted),
+            provider_user_id=provider_user_id,
+            provider_email=provider_email,
+            workspace_name=display_name,
+        ).insert()
+
+    await _upsert_source(
+        user=user,
+        provider="todoist",
+        name=f"{display_name}'s Todoist",
+        connected_account_id=provider_user_id,
+        connected_account_email=provider_email,
+    )

@@ -12,7 +12,8 @@ from app.models.route import Route, RouteEvent
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
-from app.services import gdocs_svc, notion_svc, slack_svc, vector_svc
+from app.config import settings
+from app.services import gdocs_svc, notion_svc, slack_svc, todoist_svc, trello_svc, vector_svc
 from app.utils.embeddings import embed_text
 import asyncio
 
@@ -77,7 +78,7 @@ async def deliver(body: DeliverRequest) -> dict:
         if body.save_as_slot:
             result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title)
         else:
-            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id)
+            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary)
 
         route.status = "delivered"
         route.summary = body.summary or None
@@ -104,7 +105,7 @@ async def deliver(body: DeliverRequest) -> dict:
         raise
 
 
-async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None) -> dict:
+async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None, summary: str = "") -> dict:
     if not slot_id:
         raise ValueError("No slot_id provided for delivery")
 
@@ -132,6 +133,16 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         await gdocs_svc.append_content(slot.destination.resource_id, content, access_token, tab_id=target_tab_id)
     elif source.provider == "slack":
         await slack_svc.post_message(slot.destination.resource_id, content, access_token)
+    elif source.provider == "todoist":
+        resource_id = slot.destination.resource_id
+        task_title = (summary or content[:100]).strip() or "Note"
+        if " > " in (slot.destination.resource_name or ""):
+            await todoist_svc.create_task(task_title, content, access_token, section_id=resource_id)
+        else:
+            await todoist_svc.create_task(task_title, content, access_token, project_id=resource_id)
+    elif source.provider == "trello":
+        card_name = (summary or content[:100]).strip() or "Note"
+        await trello_svc.create_card(slot.destination.resource_id, card_name, content, settings.TRELLO_API_KEY, access_token)
 
     # Update last_used_at on integration
     integration.last_used_at = datetime.now(timezone.utc)
@@ -219,6 +230,25 @@ async def _save_as_new_slot(
         channel = channels[0]
         await slack_svc.post_message(channel["id"], content, access_token)
         resource = channel
+    elif source.provider == "todoist":
+        # Save to the user's inbox project (falls back to first project)
+        projects = await todoist_svc.list_projects(access_token)
+        inbox = next((p for p in projects if p.get("is_inbox_project")), None)
+        target = inbox or (projects[0] if projects else None)
+        if not target:
+            raise ValueError("No Todoist projects found")
+        task = await todoist_svc.create_task(title, content, access_token, project_id=target["id"])
+        resource = {"id": task["id"], "name": task["name"], "url": task.get("url")}
+    elif source.provider == "trello":
+        # Save to the first list of the first board
+        boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
+        if not boards:
+            raise ValueError("No Trello boards found")
+        lists = await trello_svc.list_lists(boards[0]["id"], settings.TRELLO_API_KEY, access_token)
+        if not lists:
+            raise ValueError("No Trello lists found on first board")
+        card = await trello_svc.create_card(lists[0]["id"], title, content, settings.TRELLO_API_KEY, access_token)
+        resource = {"id": lists[0]["id"], "name": f"{boards[0]['name']} > {lists[0]['name']}", "url": card.get("url")}
     else:
         raise ValueError(f"Unknown provider: {source.provider}")
 

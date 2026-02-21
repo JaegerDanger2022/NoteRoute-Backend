@@ -7,13 +7,14 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
+from app.config import settings
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.core.security import decrypt_token
 from app.models.integration import Integration
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
-from app.services import claude_svc, gdocs_svc, notion_svc, slack_svc, vector_svc
+from app.services import claude_svc, gdocs_svc, notion_svc, slack_svc, todoist_svc, trello_svc, vector_svc
 from app.services.claude_svc import CustomLLMCreds
 from app.services.vector_svc import CustomIndexCreds
 from app.utils.embeddings import CustomBedrockCreds, embed_text
@@ -122,6 +123,14 @@ async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: s
         return await gdocs_svc.fetch_document_text(resource_id, access_token)
     elif provider == "slack":
         return await slack_svc.fetch_channel_messages(resource_id, access_token)
+    elif provider == "todoist":
+        try:
+            return await todoist_svc.fetch_project_tasks(resource_id, access_token)
+        except Exception:
+            logger.warning("Could not fetch Todoist tasks for resource_id=%s (may be a section)", resource_id)
+            return ""
+    elif provider == "trello":
+        return await trello_svc.fetch_list_cards(resource_id, settings.TRELLO_API_KEY, access_token)
     return ""
 
 

@@ -41,8 +41,10 @@ class Settings(BaseSettings):
         """Return LANGGRAPH_INTERNAL_URL with any trailing slash stripped."""
         return self.LANGGRAPH_INTERNAL_URL.rstrip("/")
 
-    # Notion — internal integration token (replace with OAuth client ID/secret when going public)
-    NOTION_INTEGRATION_TOKEN: str = ""
+    # Notion — OAuth public integration
+    NOTION_CLIENT_ID: str = ""
+    NOTION_CLIENT_SECRET: str = ""
+    NOTION_REDIRECT_URI: str = ""
 
     # OAuth — Google
     GOOGLE_CLIENT_ID: str = ""
@@ -53,6 +55,15 @@ class Settings(BaseSettings):
     SLACK_CLIENT_ID: str = ""
     SLACK_CLIENT_SECRET: str = ""
     SLACK_REDIRECT_URI: str = ""
+
+    # OAuth — Todoist
+    TODOIST_CLIENT_ID: str = ""
+    TODOIST_CLIENT_SECRET: str = ""
+    TODOIST_REDIRECT_URI: str = ""
+
+    # OAuth — Trello
+    TRELLO_API_KEY: str = ""
+    TRELLO_REDIRECT_URI: str = ""
 
     # CORS (comma-separated list)
     ALLOWED_ORIGINS: str = "http://localhost:8081,http://localhost:3000"
