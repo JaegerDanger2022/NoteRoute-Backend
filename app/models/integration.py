@@ -15,7 +15,7 @@ class OAuthTokens(BaseModel):
 
 class Integration(Document):
     user_id: PydanticObjectId
-    provider: Literal["notion", "google", "slack"]
+    provider: Literal["notion", "google", "slack", "todoist"]
     tokens: OAuthTokens
     provider_user_id: str
     provider_email: str | None = None
