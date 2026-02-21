@@ -560,8 +560,6 @@ async def _handle_todoist_callback(code: str, state: str) -> None:
                 "code": code,
                 "client_id": settings.TODOIST_CLIENT_ID,
                 "client_secret": settings.TODOIST_CLIENT_SECRET,
-                "redirect_uri": settings.TODOIST_REDIRECT_URI,
-                "grant_type": "authorization_code",
             },
         )
         token_resp.raise_for_status()

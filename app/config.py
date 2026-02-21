@@ -59,7 +59,6 @@ class Settings(BaseSettings):
     # OAuth — Todoist
     TODOIST_CLIENT_ID: str = ""
     TODOIST_CLIENT_SECRET: str = ""
-    TODOIST_REDIRECT_URI: str = ""
 
     # OAuth — Trello
     TRELLO_API_KEY: str = ""
