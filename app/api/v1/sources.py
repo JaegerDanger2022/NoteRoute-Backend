@@ -160,7 +160,8 @@ async def delete_source(
         KnowledgeSlot.is_active == True,
     ).to_list()
 
-    slot_count = len(slots)
+    # Only count primary slots (not Todoist section children) — mirrors delete_slot logic
+    slot_count = sum(1 for s in slots if s.parent_slot_id is None)
 
     for slot in slots:
         try:
