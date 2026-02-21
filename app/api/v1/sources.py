@@ -214,16 +214,7 @@ async def list_resources(
         return await todoist_svc.list_projects(access_token)
     elif source.provider == "trello":
         boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
-        resources = []
-        for board in boards:
-            lists = await trello_svc.list_lists(board["id"], settings.TRELLO_API_KEY, access_token)
-            for lst in lists:
-                resources.append({
-                    "id": lst["id"],
-                    "name": f"{board['name']} > {lst['name']}",
-                    "url": board.get("url"),
-                })
-        return resources
+        return [{"id": b["id"], "name": b["name"], "url": b.get("url")} for b in boards]
     else:
         raise NotFoundError(f"Unknown provider: {source.provider}")
 
@@ -258,5 +249,7 @@ async def list_resource_children(
 
     if source.provider == "todoist":
         return await todoist_svc.list_sections(resource_id, access_token)
+    elif source.provider == "trello":
+        return await trello_svc.list_lists(resource_id, settings.TRELLO_API_KEY, access_token)
 
     return []

@@ -34,6 +34,10 @@ class SlotCreateRequest(BaseModel):
     read_content: bool = False
 
 
+class SlotBulkCreateRequest(BaseModel):
+    slots: list[SlotCreateRequest]
+
+
 class SlotUpdateRequest(BaseModel):
     source_id: str | None = None
     name: str | None = None
@@ -361,6 +365,59 @@ async def create_slot(
         )
 
     return _slot_to_dict(slot)
+
+
+@router.post("/bulk", status_code=201)
+async def bulk_create_slots(
+    body: SlotBulkCreateRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Create multiple slots in one request (used by Trello to create one slot per list)."""
+    available = current_user.limits.max_slots - current_user.usage.slots_count
+    if len(body.slots) > available:
+        raise TierLimitError(
+            f"Adding {len(body.slots)} slots would exceed your limit of {current_user.limits.max_slots}."
+        )
+
+    created = []
+    for req in body.slots:
+        source_id = PydanticObjectId(req.source_id)
+        source = await Source.find_one(
+            Source.id == source_id,
+            Source.user_id == current_user.id,
+            Source.is_active == True,
+        )
+        if not source:
+            continue
+        slot = KnowledgeSlot(
+            user_id=current_user.id,
+            source_id=source_id,
+            name=req.name,
+            description=req.description,
+            content_sample=req.content_sample,
+            destination=req.destination,
+            tags=req.tags,
+            read_content=req.read_content,
+        )
+        await slot.insert()
+        current_user.usage.slots_count += 1
+        user_provided_description = bool(
+            req.description and req.description.strip() and req.description.strip() != req.name.strip()
+        )
+        background_tasks.add_task(
+            _embed_and_enrich_slot,
+            str(slot.id),
+            str(current_user.id),
+            source.name,
+            source.provider,
+            user_provided_description,
+            bool(req.tags),
+        )
+        created.append(_slot_to_dict(slot))
+
+    await current_user.save()
+    return created
 
 
 @router.get("/{slot_id}")
