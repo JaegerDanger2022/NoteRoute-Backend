@@ -60,9 +60,8 @@ class Settings(BaseSettings):
     TODOIST_CLIENT_ID: str = ""
     TODOIST_CLIENT_SECRET: str = ""
 
-    # OAuth — Trello
+    # OAuth — Trello (return_url points to WEB_APP_URL/oauth/trello-callback, not a backend route)
     TRELLO_API_KEY: str = ""
-    TRELLO_REDIRECT_URI: str = ""
 
     # CORS (comma-separated list)
     ALLOWED_ORIGINS: str = "http://localhost:8081,http://localhost:3000"

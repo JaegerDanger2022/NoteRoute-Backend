@@ -103,7 +103,10 @@ async def connect_integration(
 
     elif provider == "trello":
         from urllib.parse import quote
-        return_url = quote(f"{settings.TRELLO_REDIRECT_URI}?state={state}", safe="")
+        # Trello returns the token as a URL *fragment* (#token=...) appended to return_url.
+        # Point directly to the NextJS trello-callback page so the browser can read the hash.
+        trello_callback_page = f"{settings.WEB_APP_URL}/oauth/trello-callback"
+        return_url = quote(f"{trello_callback_page}?state={state}", safe="")
         url = (
             f"{_TRELLO_AUTH_URL}"
             f"?key={settings.TRELLO_API_KEY}"
@@ -177,17 +180,14 @@ async def google_has_write(
     return {"has_write": has_write}
 
 
-@router.get("/trello/callback", response_model=None)
-async def trello_callback(token: str, state: str) -> RedirectResponse:
-    """Handle Trello's token redirect — Trello returns ?token=... not ?code=..."""
-    is_web = "|web" in state
+@router.get("/trello/token", response_model=None)
+async def trello_token(token: str, state: str) -> dict:
+    """Called by the NextJS trello-callback page after extracting the token from
+    window.location.hash. Trello uses response_type=token which delivers the token
+    as a URL fragment (#token=...) — never sent to the server — so the frontend
+    page must extract it and call this endpoint directly."""
     await _handle_trello_callback(token, state)
-
-    if is_web:
-        web_url = f"{settings.WEB_APP_URL}/oauth/callback?provider=trello&status=success"
-        return RedirectResponse(url=web_url, status_code=302)
-
-    return RedirectResponse(url="noteroute://oauth/success?provider=trello", status_code=302)
+    return {"status": "connected", "provider": "trello"}
 
 
 @router.get("/{provider}/callback", response_model=None)
