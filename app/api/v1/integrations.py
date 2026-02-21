@@ -476,12 +476,16 @@ async def _upsert_source(
     now = datetime.now(timezone.utc)
 
     if existing:
+        was_inactive = not existing.is_active
         existing.name = name
         existing.connected_account_id = connected_account_id
         existing.connected_account_email = connected_account_email
         existing.is_active = True
         existing.updated_at = now
         await existing.save()
+        if was_inactive:
+            user.usage.sources_count += 1
+            await user.save()
     else:
         await Source(
             user_id=user.id,

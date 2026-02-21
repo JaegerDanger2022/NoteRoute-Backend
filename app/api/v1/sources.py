@@ -83,11 +83,15 @@ async def create_source(
     now = datetime.now(timezone.utc)
 
     if existing:
+        was_inactive = not existing.is_active
         existing.name = body.name
         existing.tags = body.tags
         existing.is_active = True
         existing.updated_at = now
         await existing.save()
+        if was_inactive:
+            current_user.usage.sources_count += 1
+            await current_user.save()
         return _source_to_dict(existing)
 
     source = Source(
