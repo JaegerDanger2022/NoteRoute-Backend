@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import uuid
@@ -112,32 +111,17 @@ async def process_stream(
         # Emit init event with run_id and route_id immediately
         yield f"data: {json.dumps({'run_id': run_id, 'route_id': str(route.id), 'node': 'init'})}\n\n"
 
-        # Run LangGraph pipeline as a background task while streaming keepalives
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            lg_task = asyncio.create_task(
-                client.post(f"{settings.langgraph_url}/run", json=payload)
-            )
-            try:
-                while not lg_task.done():
-                    await asyncio.sleep(10)
-                    if not lg_task.done():
-                        yield f"data: {json.dumps({'node': 'ping'})}\n\n"
-                resp = await lg_task
-                resp.raise_for_status()
-                result = resp.json()
-            except Exception as e:
-                logger.error("Pipeline stream failed: %s", e)
-                yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
-                return
-
-        # Emit result events
-        if result.get("transcript"):
-            yield f"data: {json.dumps({'node': 'transcribe', 'transcript': result['transcript']})}\n\n"
-        ranked_slots = result.get("ranked_slots") or []
-        if result.get("error"):
-            yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
-        else:
-            yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
+        # Proxy the LangGraph SSE stream in real time
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream("POST", f"{settings.langgraph_url}/stream", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            yield f"{line}\n\n"
+        except Exception as e:
+            logger.error("Pipeline stream failed: %s", e)
+            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         _stream(),
@@ -178,28 +162,16 @@ async def process_text_stream(
     async def _stream():
         yield f"data: {json.dumps({'run_id': run_id, 'route_id': str(route.id), 'node': 'init'})}\n\n"
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            lg_task = asyncio.create_task(
-                client.post(f"{settings.langgraph_url}/run/text", json=payload)
-            )
-            try:
-                while not lg_task.done():
-                    await asyncio.sleep(10)
-                    if not lg_task.done():
-                        yield f"data: {json.dumps({'node': 'ping'})}\n\n"
-                resp = await lg_task
-                resp.raise_for_status()
-                result = resp.json()
-            except Exception as e:
-                logger.error("Text pipeline stream failed: %s", e)
-                yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
-                return
-
-        ranked_slots = result.get("ranked_slots") or []
-        if result.get("error"):
-            yield f"data: {json.dumps({'node': 'error', 'error': result['error']})}\n\n"
-        else:
-            yield f"data: {json.dumps({'node': 'rank', 'ranked_slots': ranked_slots, 'summary': result.get('summary')})}\n\n"
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream("POST", f"{settings.langgraph_url}/stream/text", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            yield f"{line}\n\n"
+        except Exception as e:
+            logger.error("Text pipeline stream failed: %s", e)
+            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
         _stream(),
