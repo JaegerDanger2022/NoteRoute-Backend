@@ -23,6 +23,7 @@ _PUBLIC_PREFIXES = (
     "/api/v1/users/internal/",
     "/api/v1/slots/internal/",
     "/api/v1/deliver",
+    "/api/v1/admin/internal/",
 )
 
 

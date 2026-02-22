@@ -8,6 +8,8 @@ from app.config import settings
 
 _bedrock_client = None
 
+_NOVA_EMBED_MODEL_ID = "amazon.nova-embed-text-v1:0"
+
 
 @dataclass
 class CustomBedrockCreds:
@@ -37,11 +39,22 @@ def _get_client(custom: CustomBedrockCreds | None = None):
     return _bedrock_client
 
 
-def _invoke_embedding(text: str, custom: CustomBedrockCreds | None = None) -> list[float]:
+def _invoke_embedding(
+    text: str,
+    custom: CustomBedrockCreds | None = None,
+    use_nova: bool = False,
+) -> list[float]:
     client = _get_client(custom)
-    body = json.dumps({"inputText": text, "dimensions": 1024, "normalize": True})
+    if use_nova:
+        # Nova embed: simple inputText, returns 1024 dims by default
+        body = json.dumps({"inputText": text})
+        model_id = _NOVA_EMBED_MODEL_ID
+    else:
+        # Titan embed: explicit dimensions + normalize
+        body = json.dumps({"inputText": text, "dimensions": 1024, "normalize": True})
+        model_id = settings.BEDROCK_EMBED_MODEL_ID
     response = client.invoke_model(
-        modelId=settings.BEDROCK_EMBED_MODEL_ID,
+        modelId=model_id,
         contentType="application/json",
         accept="application/json",
         body=body,
@@ -51,5 +64,7 @@ def _invoke_embedding(text: str, custom: CustomBedrockCreds | None = None) -> li
 
 
 async def embed_text(text: str, custom: CustomBedrockCreds | None = None) -> list[float]:
-    """Generate a 1024-dim embedding vector via AWS Bedrock Titan Text Embeddings V2."""
-    return await asyncio.to_thread(_invoke_embedding, text, custom)
+    """Generate a 1024-dim embedding vector via AWS Bedrock (Titan or Nova per GlobalConfig)."""
+    from app.models.global_config import GlobalConfig
+    config = await GlobalConfig.get_config()
+    return await asyncio.to_thread(_invoke_embedding, text, custom, config.use_nova)

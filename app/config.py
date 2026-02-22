@@ -69,5 +69,8 @@ class Settings(BaseSettings):
     # Web app URL (used for OAuth callbacks from the Next.js frontend)
     WEB_APP_URL: str = "http://localhost:3000"
 
+    # Admin — comma-separated Firebase UIDs allowed to access /admin endpoints
+    ADMIN_FIREBASE_UIDS: str = ""
+
 
 settings = Settings()

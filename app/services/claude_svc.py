@@ -12,6 +12,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _HAIKU_MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+_NOVA_LITE_MODEL_ID = "amazon.nova-lite-v1:0"
 
 _bedrock_client = None
 
@@ -94,6 +95,7 @@ def _infer_slot_metadata_sync(
     source_name: str,
     provider: str,
     custom: Optional[CustomLLMCreds] = None,
+    use_nova: bool = False,
 ) -> dict:
     """
     Call an LLM to infer a description and tags for a slot based on its name.
@@ -124,19 +126,33 @@ Rules:
             text = _call_anthropic_sync(prompt, custom.api_key, "claude-haiku-4-5-20251001", 256)
     else:
         client = _get_client()
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 256,
-            "messages": [{"role": "user", "content": prompt}],
-        })
-        response = client.invoke_model(
-            modelId=_HAIKU_MODEL_ID,
-            contentType="application/json",
-            accept="application/json",
-            body=body,
-        )
-        result = json.loads(response["body"].read())
-        text = result["content"][0]["text"].strip()
+        if use_nova:
+            body = json.dumps({
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {"maxTokens": 256},
+            })
+            response = client.invoke_model(
+                modelId=_NOVA_LITE_MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=body,
+            )
+            result = json.loads(response["body"].read())
+            text = result["output"]["message"]["content"][0]["text"].strip()
+        else:
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 256,
+                "messages": [{"role": "user", "content": prompt}],
+            })
+            response = client.invoke_model(
+                modelId=_HAIKU_MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=body,
+            )
+            result = json.loads(response["body"].read())
+            text = result["content"][0]["text"].strip()
 
     text = _strip_fences(text)
     parsed = json.loads(text)
@@ -150,6 +166,7 @@ def _summarize_slot_content_sync(
     slot_name: str,
     raw_content: str,
     custom: Optional[CustomLLMCreds] = None,
+    use_nova: bool = False,
 ) -> str:
     """Summarize raw resource content into a concise indexing-ready passage."""
     truncated = raw_content[:100000]
@@ -170,6 +187,19 @@ Write a comprehensive summary (500-700 words) of what this resource is about and
             return _call_anthropic_sync(prompt, custom.api_key, "claude-haiku-4-5-20251001", 1024)
     else:
         client = _get_client()
+        if use_nova:
+            body = json.dumps({
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {"maxTokens": 1024},
+            })
+            response = client.invoke_model(
+                modelId=_NOVA_LITE_MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=body,
+            )
+            result = json.loads(response["body"].read())
+            return result["output"]["message"]["content"][0]["text"].strip()
         body = json.dumps({
             "anthropic_version": "bedrock-2023-05-31",
             "max_tokens": 1024,
@@ -196,8 +226,10 @@ async def infer_slot_metadata(
     custom: Optional[CustomLLMCreds] = None,
 ) -> dict:
     """Async wrapper — returns {"description": str, "tags": list[str]}."""
+    from app.models.global_config import GlobalConfig
+    config = await GlobalConfig.get_config()
     return await asyncio.to_thread(
-        _infer_slot_metadata_sync, slot_name, source_name, provider, custom
+        _infer_slot_metadata_sync, slot_name, source_name, provider, custom, config.use_nova
     )
 
 
@@ -207,4 +239,8 @@ async def summarize_slot_content(
     custom: Optional[CustomLLMCreds] = None,
 ) -> str:
     """Async wrapper — returns a plain-text summary of resource content."""
-    return await asyncio.to_thread(_summarize_slot_content_sync, slot_name, raw_content, custom)
+    from app.models.global_config import GlobalConfig
+    config = await GlobalConfig.get_config()
+    return await asyncio.to_thread(
+        _summarize_slot_content_sync, slot_name, raw_content, custom, config.use_nova
+    )

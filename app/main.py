@@ -35,6 +35,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting NoteRoute Backend...")
     init_firebase()
     await init_db()
+    from app.models.global_config import GlobalConfig
+    await GlobalConfig.get_config()  # seed singleton on startup
     try:
         vector_svc.init_vector_store()
         logger.info("Connected to MongoDB, Firebase, and S3 Vectors")
