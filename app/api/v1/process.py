@@ -52,6 +52,8 @@ class CreateDocRequest(BaseModel):
     content: str = ""
     doc_title: str = ""
     audio_s3_key: str = ""  # if provided, transcribe first and use as content
+    image_s3_key: str = ""  # if provided, extract image text first and use as content
+    extraction_mode: str = "vision"  # "ocr" | "vision"
 
 
 @router.post("")
@@ -266,6 +268,19 @@ async def create_doc(
             transcript_from_audio = lg.get("transcript", "")
         content = transcript_from_audio or content
 
+    elif body.image_s3_key:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                f"{settings.langgraph_url}/extract-image",
+                json={"image_s3_key": body.image_s3_key, "extraction_mode": body.extraction_mode, "user_id": str(current_user.id)},
+            )
+            resp.raise_for_status()
+            lg = resp.json()
+            if lg.get("error"):
+                from app.core.exceptions import BadRequestError
+                raise BadRequestError(f"Image extraction failed: {lg['error']}")
+            content = lg.get("transcript", "") or content
+
     if not content:
         from app.core.exceptions import BadRequestError
         raise BadRequestError("Content is required (text or audio).")
@@ -274,7 +289,7 @@ async def create_doc(
     route = Route(
         user_id=current_user.id,
         run_id=run_id,
-        audio_s3_key=body.audio_s3_key or "",
+        audio_s3_key=body.audio_s3_key or body.image_s3_key or "",
         transcript=content,
         status="processing",
     )
