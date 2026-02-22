@@ -70,6 +70,44 @@ async def create_card(
     return {"id": card["id"], "name": card["name"], "url": card.get("shortUrl")}
 
 
+async def list_cards_for_picker(list_id: str, api_key: str, token: str) -> list[dict]:
+    """Return cards in a list for UI display: [{id, name}]."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{_BASE}/lists/{list_id}/cards",
+            params=_params(api_key, token, fields="id,name"),
+        )
+        resp.raise_for_status()
+        cards = resp.json()
+    return [{"id": c["id"], "name": c["name"]} for c in cards]
+
+
+async def append_to_card(
+    card_id: str,
+    content: str,
+    api_key: str,
+    token: str,
+) -> None:
+    """Append content to an existing card's description (appends with a separator)."""
+    async with httpx.AsyncClient() as client:
+        # Fetch existing description
+        resp = await client.get(
+            f"{_BASE}/cards/{card_id}",
+            params=_params(api_key, token, fields="desc"),
+        )
+        resp.raise_for_status()
+        existing_desc = resp.json().get("desc", "").strip()
+
+        new_desc = f"{existing_desc}\n\n---\n\n{content}" if existing_desc else content
+
+        resp = await client.put(
+            f"{_BASE}/cards/{card_id}",
+            params=_params(api_key, token),
+            json={"desc": new_desc},
+        )
+        resp.raise_for_status()
+
+
 async def fetch_list_cards(
     list_id: str, api_key: str, token: str, max_chars: int = 50000
 ) -> str:

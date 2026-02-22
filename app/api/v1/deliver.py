@@ -143,8 +143,13 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         else:
             await todoist_svc.create_task(task_title, content, access_token, project_id=resource_id)
     elif source.provider == "trello":
-        card_name = (summary or content[:100]).strip() or "Note"
-        await trello_svc.create_card(slot.destination.resource_id, card_name, content, settings.TRELLO_API_KEY, access_token)
+        target_card_id = target_tab_id  # reuse target_tab_id field for Trello card ID
+        if target_card_id:
+            await trello_svc.append_to_card(target_card_id, content, settings.TRELLO_API_KEY, access_token)
+        else:
+            first_sentence = content.split(".")[0].strip()
+            card_name = (first_sentence[:80] if first_sentence else content[:80]).strip() or "Note"
+            await trello_svc.create_card(slot.destination.resource_id, card_name, content, settings.TRELLO_API_KEY, access_token)
 
     # Update last_used_at on integration
     integration.last_used_at = datetime.now(timezone.utc)
