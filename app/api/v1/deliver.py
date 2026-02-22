@@ -55,6 +55,7 @@ class DeliverRequest(BaseModel):
     save_as_slot: bool = False
     target_tab_id: str | None = None
     doc_title: str | None = None
+    trello_format: str = "note"  # "note" | "bullet" | "checklist"
 
 
 @router.post("")
@@ -78,7 +79,7 @@ async def deliver(body: DeliverRequest) -> dict:
         if body.save_as_slot:
             result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title)
         else:
-            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary)
+            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary, body.trello_format)
 
         route.status = "delivered"
         route.summary = body.summary or None
@@ -105,7 +106,7 @@ async def deliver(body: DeliverRequest) -> dict:
         raise
 
 
-async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None, summary: str = "") -> dict:
+async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None, summary: str = "", trello_format: str = "note") -> dict:
     if not slot_id:
         raise ValueError("No slot_id provided for delivery")
 
@@ -145,7 +146,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
     elif source.provider == "trello":
         target_card_id = target_tab_id  # reuse target_tab_id field for Trello card ID
         if target_card_id:
-            await trello_svc.append_to_card(target_card_id, content, settings.TRELLO_API_KEY, access_token)
+            await trello_svc.append_to_card(target_card_id, content, settings.TRELLO_API_KEY, access_token, fmt=trello_format)
         else:
             # Use first sentence of the summary as a coherent title, capped at 50 chars
             first_sentence = (summary or content).split(".")[0].strip()
@@ -155,7 +156,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
                 truncated = first_sentence[:50]
                 last_space = truncated.rfind(" ")
                 card_name = (truncated[:last_space] if last_space > 10 else truncated).rstrip(".,;:") or "Note"
-            await trello_svc.create_card(slot.destination.resource_id, card_name, content, settings.TRELLO_API_KEY, access_token)
+            await trello_svc.create_card(slot.destination.resource_id, card_name, content, settings.TRELLO_API_KEY, access_token, fmt=trello_format)
 
     # Update last_used_at on integration
     integration.last_used_at = datetime.now(timezone.utc)

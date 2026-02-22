@@ -51,22 +51,68 @@ async def list_lists(board_id: str, api_key: str, token: str) -> list[dict]:
     return [{"id": l["id"], "name": l["name"], "url": None} for l in lists]
 
 
+def _split_into_items(content: str, max_len: int = 100) -> list[str]:
+    """Split content into short checklist items (by newlines then sentences)."""
+    raw: list[str] = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Further split long lines on sentence boundaries
+        for sentence in line.split(". "):
+            sentence = sentence.strip().rstrip(".")
+            if sentence:
+                raw.append(sentence[:max_len])
+    return raw or [content[:max_len]]
+
+
+def _format_as_bullets(content: str) -> str:
+    """Prefix each non-empty line with '- '."""
+    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    return "\n".join(f"- {l}" for l in lines) if lines else content
+
+
+async def _add_checklist(card_id: str, items: list[str], api_key: str, token: str) -> None:
+    """Create a checklist on a card and populate it with items."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_BASE}/cards/{card_id}/checklists",
+            params=_params(api_key, token),
+            json={"name": "Notes"},
+        )
+        resp.raise_for_status()
+        checklist_id = resp.json()["id"]
+        for item in items:
+            await client.post(
+                f"{_BASE}/checklists/{checklist_id}/checkItems",
+                params=_params(api_key, token),
+                json={"name": item},
+            )
+
+
 async def create_card(
     list_id: str,
     name: str,
     description: str,
     api_key: str,
     token: str,
+    fmt: str = "note",
 ) -> dict:
-    """Create a card in a list and return {id, name, url}."""
+    """Create a card in a list and return {id, name, url}.
+
+    fmt: "note" (plain text desc), "bullet" (bullet-prefixed desc), "checklist" (Trello checklist).
+    """
+    desc = _format_as_bullets(description) if fmt == "bullet" else description
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{_BASE}/cards",
             params=_params(api_key, token),
-            json={"idList": list_id, "name": name, "desc": description},
+            json={"idList": list_id, "name": name, "desc": desc if fmt != "checklist" else ""},
         )
         resp.raise_for_status()
         card = resp.json()
+    if fmt == "checklist":
+        await _add_checklist(card["id"], _split_into_items(description), api_key, token)
     return {"id": card["id"], "name": card["name"], "url": card.get("shortUrl")}
 
 
@@ -87,10 +133,18 @@ async def append_to_card(
     content: str,
     api_key: str,
     token: str,
+    fmt: str = "note",
 ) -> None:
-    """Append content to an existing card's description (appends with a separator)."""
+    """Append content to an existing card.
+
+    fmt: "note" (plain text), "bullet" (bullet-prefixed lines), "checklist" (new checklist on card).
+    """
+    if fmt == "checklist":
+        await _add_checklist(card_id, _split_into_items(content), api_key, token)
+        return
+
+    formatted = _format_as_bullets(content) if fmt == "bullet" else content
     async with httpx.AsyncClient() as client:
-        # Fetch existing description
         resp = await client.get(
             f"{_BASE}/cards/{card_id}",
             params=_params(api_key, token, fields="desc"),
@@ -98,7 +152,7 @@ async def append_to_card(
         resp.raise_for_status()
         existing_desc = resp.json().get("desc", "").strip()
 
-        new_desc = f"{existing_desc}\n\n---\n\n{content}" if existing_desc else content
+        new_desc = f"{existing_desc}\n\n---\n\n{formatted}" if existing_desc else formatted
 
         resp = await client.put(
             f"{_BASE}/cards/{card_id}",
