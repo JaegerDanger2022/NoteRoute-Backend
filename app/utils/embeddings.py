@@ -8,7 +8,7 @@ from app.config import settings
 
 _bedrock_client = None
 
-_NOVA_EMBED_MODEL_ID = "amazon.nova-embed-text-v1:0"
+_NOVA_EMBED_MODEL_ID = "amazon.nova-2-multimodal-embeddings-v1:0"
 
 
 @dataclass
@@ -46,8 +46,16 @@ def _invoke_embedding(
 ) -> list[float]:
     client = _get_client(custom)
     if use_nova:
-        # Nova embed: simple inputText, returns 1024 dims by default
-        body = json.dumps({"inputText": text})
+        # Nova 2 multimodal embeddings: structured schema, returns embeddings array
+        body = json.dumps({
+            "schemaVersion": "nova-multimodal-embed-v1",
+            "taskType": "SINGLE_EMBEDDING",
+            "singleEmbeddingParams": {
+                "embeddingPurpose": "GENERIC_INDEX",
+                "embeddingDimension": 1024,
+                "text": {"truncationMode": "END", "value": text},
+            },
+        })
         model_id = _NOVA_EMBED_MODEL_ID
     else:
         # Titan embed: explicit dimensions + normalize
@@ -60,6 +68,8 @@ def _invoke_embedding(
         body=body,
     )
     result = json.loads(response["body"].read())
+    if use_nova:
+        return result["embeddings"][0]["embedding"]
     return result["embedding"]
 
 
