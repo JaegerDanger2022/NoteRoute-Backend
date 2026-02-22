@@ -147,8 +147,14 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         if target_card_id:
             await trello_svc.append_to_card(target_card_id, content, settings.TRELLO_API_KEY, access_token)
         else:
-            first_sentence = content.split(".")[0].strip()
-            card_name = (first_sentence[:80] if first_sentence else content[:80]).strip() or "Note"
+            # Use first sentence of the summary as a coherent title, capped at 50 chars
+            first_sentence = (summary or content).split(".")[0].strip()
+            if len(first_sentence) <= 50:
+                card_name = first_sentence.rstrip(".,;:") or "Note"
+            else:
+                truncated = first_sentence[:50]
+                last_space = truncated.rfind(" ")
+                card_name = (truncated[:last_space] if last_space > 10 else truncated).rstrip(".,;:") or "Note"
             await trello_svc.create_card(slot.destination.resource_id, card_name, content, settings.TRELLO_API_KEY, access_token)
 
     # Update last_used_at on integration
