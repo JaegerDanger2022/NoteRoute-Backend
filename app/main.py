@@ -39,9 +39,9 @@ async def lifespan(app: FastAPI):
     await GlobalConfig.get_config()  # seed singleton on startup
     try:
         vector_svc.init_vector_store()
-        logger.info("Connected to MongoDB, Firebase, and S3 Vectors")
+        logger.info("Connected to MongoDB, Firebase, and Pinecone")
     except Exception:
-        logger.exception("S3 Vectors init failed — continuing without vector store")
+        logger.exception("Pinecone init failed — vector upsert/delete/search will fail until this is resolved")
     keep_alive_task = asyncio.create_task(_keep_alive_loop())
     yield
     keep_alive_task.cancel()

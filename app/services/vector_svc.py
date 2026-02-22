@@ -139,7 +139,5 @@ def search_slots(
 def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None) -> None:
     idx = _get_index(custom)
     for ns in (_NS_SUMMARY, _NS_CONTENT):
-        try:
-            idx.delete(ids=[slot_id], namespace=ns)
-        except Exception:
-            pass  # already absent — safe to ignore
+        idx.delete(ids=[slot_id], namespace=ns)
+        logger.info("Deleted vector %s from namespace %s", slot_id, ns)
