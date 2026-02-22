@@ -90,9 +90,20 @@ async def admin_users(
     page_size: int = Query(default=50, ge=1, le=200),
     _: str = Depends(_require_admin),
 ) -> dict:
+    import asyncio
     skip = (page - 1) * page_size
     users = await User.find_all().skip(skip).limit(page_size).to_list()
     total = await User.count()
+
+    async def _counts(u: User) -> tuple[int, int]:
+        slots, sources = await asyncio.gather(
+            KnowledgeSlot.find(KnowledgeSlot.user_id == u.id).count(),
+            Source.find(Source.user_id == u.id).count(),
+        )
+        return slots, sources
+
+    counts = await asyncio.gather(*[_counts(u) for u in users])
+
     return {
         "total": total,
         "page": page,
@@ -102,10 +113,10 @@ async def admin_users(
                 "id": str(u.id),
                 "email": u.email,
                 "tier": u.tier,
-                "slots_count": u.usage.slots_count,
-                "sources_count": u.usage.sources_count,
+                "slots_count": counts[i][0],
+                "sources_count": counts[i][1],
                 "created_at": u.created_at.isoformat(),
             }
-            for u in users
+            for i, u in enumerate(users)
         ],
     }
