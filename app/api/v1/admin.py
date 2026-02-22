@@ -31,7 +31,7 @@ async def admin_me(request: Request) -> dict:
     """Check whether the current user is an admin. Always returns 200 — safe for frontend probe."""
     uid: str = request.state.firebase_uid
     allowed = [u.strip() for u in settings.ADMIN_FIREBASE_UIDS.split(",") if u.strip()]
-    return {"is_admin": uid in allowed}
+    return {"is_admin": uid in allowed, "uid": uid, "configured_uids": allowed}
 
 
 # ── GlobalConfig endpoints ────────────────────────────────────────────────────
