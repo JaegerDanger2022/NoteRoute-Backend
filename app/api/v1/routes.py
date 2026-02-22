@@ -14,7 +14,7 @@ router = APIRouter(prefix="/routes", tags=["routes"])
 
 def _route_to_dict(route: Route, slot_name: str | None = None) -> dict:
     # Prefer the live-lookup name (from KnowledgeSlot), fall back to cached value on route
-    resolved_slot_name = slot_name or route.slot_name or ""
+    resolved_slot_name = slot_name if slot_name is not None else (route.slot_name or "")
     return {
         "id": str(route.id),
         "run_id": route.run_id,
@@ -114,6 +114,21 @@ async def retry_route(
         ))
         await route.save()
         raise
+
+
+@router.delete("/{route_id}", status_code=204)
+async def delete_route(
+    route_id: PydanticObjectId,
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Permanently delete a history entry for the current user."""
+    route = await Route.find_one(
+        Route.id == route_id,
+        Route.user_id == current_user.id,
+    )
+    if not route:
+        raise NotFoundError("Route not found")
+    await route.delete()
 
 
 @router.get("/{route_id}/history")
