@@ -6,6 +6,22 @@ from slack_sdk import WebClient
 logger = logging.getLogger(__name__)
 
 
+def _get_user_info_sync(access_token: str, slack_user_id: str) -> dict:
+    client = WebClient(token=access_token)
+    resp = client.users_info(user=slack_user_id)
+    user = resp.get("user", {})
+    profile = user.get("profile", {})
+    return {
+        "id": user.get("id", "unknown"),
+        "name": profile.get("real_name") or profile.get("display_name") or "Slack User",
+        "email": profile.get("email"),
+    }
+
+
+async def get_user_info(access_token: str, slack_user_id: str) -> dict:
+    return await asyncio.to_thread(_get_user_info_sync, access_token, slack_user_id)
+
+
 def _list_channels_sync(access_token: str) -> list[dict]:
     client = WebClient(token=access_token)
     results = []

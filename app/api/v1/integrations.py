@@ -291,6 +291,20 @@ async def _handle_notion_callback(code: str, state: str) -> None:
     person = owner.get("person", {})
     provider_email = person.get("email")
 
+    # Notion OAuth token response often omits email; fetch it from /users/me
+    if not provider_email:
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://api.notion.com/v1/users/me",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Notion-Version": "2022-06-28",
+                },
+            )
+            if me_resp.status_code == 200:
+                me = me_resp.json()
+                provider_email = me.get("person", {}).get("email")
+
     user_id = PydanticObjectId(raw_user_id)
     user = await User.get(user_id)
     if not user:
@@ -425,12 +439,23 @@ async def _handle_slack_callback(code: str, state: str) -> None:
     team = data.get("team", {})
     workspace_name = team.get("name", "Slack Workspace")
     workspace_id = team.get("id", "unknown")
+    authed_user_id = data.get("authed_user", {}).get("id")
 
     raw_user_id = state.split("|")[0]
     user_id = PydanticObjectId(raw_user_id)
     user = await User.get(user_id)
     if not user:
         return
+
+    # Fetch the authed user's email via users.info
+    from app.services import slack_svc
+    provider_email: str | None = None
+    if authed_user_id:
+        try:
+            user_info = await slack_svc.get_user_info(access_token, authed_user_id)
+            provider_email = user_info.get("email")
+        except Exception:
+            pass  # email is best-effort
 
     existing = await Integration.find_one(
         Integration.user_id == user_id,
@@ -441,6 +466,7 @@ async def _handle_slack_callback(code: str, state: str) -> None:
     if existing:
         existing.tokens.access_token = encrypted
         existing.workspace_name = workspace_name
+        existing.provider_email = provider_email
         existing.is_active = True
         await existing.save()
     else:
@@ -449,6 +475,7 @@ async def _handle_slack_callback(code: str, state: str) -> None:
             provider="slack",
             tokens=OAuthTokens(access_token=encrypted),
             provider_user_id=workspace_id,
+            provider_email=provider_email,
             workspace_name=workspace_name,
         ).insert()
 
@@ -457,7 +484,7 @@ async def _handle_slack_callback(code: str, state: str) -> None:
         provider="slack",
         name=workspace_name,
         connected_account_id=workspace_id,
-        connected_account_email=None,
+        connected_account_email=provider_email,
     )
 
 
