@@ -43,6 +43,11 @@ class ConfirmRequest(BaseModel):
     doc_title: str | None = None
 
 
+class ProcessImageStreamRequest(BaseModel):
+    image_s3_key: str
+    extraction_mode: str = "vision"  # "ocr" | "vision"
+
+
 class CreateDocRequest(BaseModel):
     content: str = ""
     doc_title: str = ""
@@ -171,6 +176,57 @@ async def process_text_stream(
                             yield f"{line}\n\n"
         except Exception as e:
             logger.error("Text pipeline stream failed: %s", e)
+            yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/image-stream")
+async def process_image_stream(
+    body: ProcessImageStreamRequest,
+    current_user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Start a streaming pipeline run from an image uploaded to S3."""
+    if not current_user.active_source_id:
+        raise NotFoundError("No active source selected. Select a source before submitting.")
+
+    run_id = str(uuid.uuid4())
+
+    route = Route(
+        user_id=current_user.id,
+        run_id=run_id,
+        audio_s3_key=body.image_s3_key,  # reuse field to store S3 key
+        status="processing",
+    )
+    await route.insert()
+
+    payload = {
+        "run_id": run_id,
+        "user_id": str(current_user.id),
+        "image_s3_key": body.image_s3_key,
+        "extraction_mode": body.extraction_mode,
+        "source_id": str(current_user.active_source_id),
+    }
+
+    async def _stream():
+        yield f"data: {json.dumps({'run_id': run_id, 'route_id': str(route.id), 'node': 'init'})}\n\n"
+
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream("POST", f"{settings.langgraph_url}/stream/image", json=payload) as resp:
+                    resp.raise_for_status()
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data: "):
+                            yield f"{line}\n\n"
+        except Exception as e:
+            logger.error("Image pipeline stream failed: %s", e)
             yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
