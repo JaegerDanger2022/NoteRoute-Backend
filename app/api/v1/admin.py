@@ -73,8 +73,8 @@ async def internal_config() -> dict:
 @router.get("/stats")
 async def admin_stats(_: str = Depends(_require_admin)) -> dict:
     total_users = await User.count()
-    total_slots = await KnowledgeSlot.count()
-    total_sources = await Source.count()
+    total_slots = await KnowledgeSlot.find(KnowledgeSlot.is_active == True).count()
+    total_sources = await Source.find(Source.is_active == True).count()
     return {
         "total_users": total_users,
         "total_slots": total_slots,
@@ -97,8 +97,8 @@ async def admin_users(
 
     async def _counts(u: User) -> tuple[int, int]:
         slots, sources = await asyncio.gather(
-            KnowledgeSlot.find(KnowledgeSlot.user_id == u.id).count(),
-            Source.find(Source.user_id == u.id).count(),
+            KnowledgeSlot.find(KnowledgeSlot.user_id == u.id, KnowledgeSlot.is_active == True).count(),
+            Source.find(Source.user_id == u.id, Source.is_active == True).count(),
         )
         return slots, sources
 
