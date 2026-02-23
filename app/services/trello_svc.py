@@ -129,6 +129,17 @@ async def list_cards_for_picker(list_id: str, api_key: str, token: str) -> list[
     return [{"id": c["id"], "name": c["name"]} for c in cards]
 
 
+async def append_items_to_checklist(checklist_id: str, items: list[str], api_key: str, token: str) -> None:
+    """Add items to an existing Trello checklist."""
+    async with httpx.AsyncClient() as client:
+        for item in items:
+            await client.post(
+                f"{_BASE}/checklists/{checklist_id}/checkItems",
+                params=_params(api_key, token),
+                json={"name": item},
+            )
+
+
 async def append_to_card(
     card_id: str,
     content: str,
@@ -136,16 +147,22 @@ async def append_to_card(
     token: str,
     fmt: str = "note",
     checklist_title: str | None = None,
+    checklist_id: str | None = None,
 ) -> None:
     """Append content to an existing card.
 
-    fmt: "note" (plain text appended to description), "checklist" (new Trello checklist on card).
+    fmt: "note" — append to description.
+    fmt: "checklist" + checklist_id — append items to that existing checklist.
+    fmt: "checklist" + checklist_title — create a new checklist with that title.
     """
     if fmt == "checklist":
-        await _add_checklist(card_id, _split_into_items(content), api_key, token, title=checklist_title or "Notes")
+        if checklist_id:
+            await append_items_to_checklist(checklist_id, _split_into_items(content), api_key, token)
+        else:
+            await _add_checklist(card_id, _split_into_items(content), api_key, token, title=checklist_title or "Notes")
         return
 
-    formatted = _format_as_bullets(content) if fmt == "bullet" else content
+    formatted = content
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{_BASE}/cards/{card_id}",
@@ -198,6 +215,7 @@ async def fetch_card_detail(card_id: str, api_key: str, token: str) -> dict:
 
     checklists = [
         {
+            "id": cl["id"],
             "name": cl["name"],
             "items": [
                 {"name": item["name"], "complete": item["state"] == "complete"}

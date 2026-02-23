@@ -57,6 +57,7 @@ class DeliverRequest(BaseModel):
     doc_title: str | None = None
     trello_format: str = "note"  # "note" | "checklist"
     trello_checklist_title: str | None = None
+    trello_checklist_id: str | None = None
 
 
 @router.post("")
@@ -80,7 +81,7 @@ async def deliver(body: DeliverRequest) -> dict:
         if body.save_as_slot:
             result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title)
         else:
-            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary, body.trello_format, body.trello_checklist_title)
+            result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary, body.trello_format, body.trello_checklist_title, body.trello_checklist_id)
 
         route.status = "delivered"
         route.summary = body.summary or None
@@ -107,7 +108,7 @@ async def deliver(body: DeliverRequest) -> dict:
         raise
 
 
-async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None, summary: str = "", trello_format: str = "note", trello_checklist_title: str | None = None) -> dict:
+async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target_tab_id: str | None = None, summary: str = "", trello_format: str = "note", trello_checklist_title: str | None = None, trello_checklist_id: str | None = None) -> dict:
     if not slot_id:
         raise ValueError("No slot_id provided for delivery")
 
@@ -147,7 +148,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
     elif source.provider == "trello":
         target_card_id = target_tab_id  # reuse target_tab_id field for Trello card ID
         if target_card_id:
-            await trello_svc.append_to_card(target_card_id, content, settings.TRELLO_API_KEY, access_token, fmt=trello_format, checklist_title=trello_checklist_title)
+            await trello_svc.append_to_card(target_card_id, content, settings.TRELLO_API_KEY, access_token, fmt=trello_format, checklist_title=trello_checklist_title, checklist_id=trello_checklist_id)
         else:
             # Use first sentence of the summary as a coherent title, capped at 50 chars
             first_sentence = (summary or content).split(".")[0].strip()
