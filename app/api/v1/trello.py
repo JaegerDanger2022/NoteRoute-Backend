@@ -31,3 +31,13 @@ async def get_list_cards(
     token = await _get_trello_token(current_user)
     cards = await trello_svc.list_cards_for_picker(list_id, settings.TRELLO_API_KEY, token)
     return {"cards": cards}
+
+
+@router.get("/cards/{card_id}")
+async def get_card_detail(
+    card_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return full card detail (name, description, checklists) for the card content preview."""
+    token = await _get_trello_token(current_user)
+    return await trello_svc.fetch_card_detail(card_id, settings.TRELLO_API_KEY, token)

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -160,6 +161,76 @@ async def append_to_card(
             json={"desc": new_desc},
         )
         resp.raise_for_status()
+
+
+async def fetch_card_detail(card_id: str, api_key: str, token: str) -> dict:
+    """Return full card detail matching Trello's card view.
+
+    Returns: {id, name, desc, url, labels, due, due_complete, members,
+              cover_color, comment_count, attachment_count,
+              checklists: [{name, items: [{name, complete}]}]}
+    """
+    async with httpx.AsyncClient() as client:
+        card_resp, checklists_resp, members_resp = await asyncio.gather(
+            client.get(
+                f"{_BASE}/cards/{card_id}",
+                params=_params(
+                    api_key, token,
+                    fields="id,name,desc,shortUrl,labels,due,dueComplete,cover,badges",
+                ),
+            ),
+            client.get(
+                f"{_BASE}/cards/{card_id}/checklists",
+                params=_params(api_key, token),
+            ),
+            client.get(
+                f"{_BASE}/cards/{card_id}/members",
+                params=_params(api_key, token, fields="id,fullName,initials"),
+            ),
+        )
+        card_resp.raise_for_status()
+        checklists_resp.raise_for_status()
+        # members endpoint may 404 on older tokens — tolerate gracefully
+        raw_members = members_resp.json() if members_resp.status_code == 200 else []
+        card = card_resp.json()
+        raw_checklists = checklists_resp.json()
+
+    checklists = [
+        {
+            "name": cl["name"],
+            "items": [
+                {"name": item["name"], "complete": item["state"] == "complete"}
+                for item in sorted(cl.get("checkItems", []), key=lambda x: x.get("pos", 0))
+            ],
+        }
+        for cl in raw_checklists
+    ]
+
+    labels = [
+        {"name": lbl.get("name", ""), "color": lbl.get("color", "")}
+        for lbl in card.get("labels", [])
+    ]
+    members = [
+        {"name": m.get("fullName", ""), "initials": m.get("initials", "")}
+        for m in raw_members
+    ]
+    badges = card.get("badges", {})
+    cover = card.get("cover", {})
+
+    return {
+        "id": card["id"],
+        "name": card.get("name", ""),
+        "desc": card.get("desc", ""),
+        "url": card.get("shortUrl"),
+        "labels": labels,
+        "due": card.get("due"),
+        "due_complete": card.get("dueComplete", False),
+        "members": members,
+        "cover_color": cover.get("color") if cover else None,
+        "comment_count": badges.get("comments", 0),
+        "attachment_count": badges.get("attachments", 0),
+        "checklists": checklists,
+    }
 
 
 async def fetch_list_cards(
