@@ -73,13 +73,13 @@ def _format_as_bullets(content: str) -> str:
     return "\n".join(f"- {l}" for l in lines) if lines else content
 
 
-async def _add_checklist(card_id: str, items: list[str], api_key: str, token: str) -> None:
+async def _add_checklist(card_id: str, items: list[str], api_key: str, token: str, title: str = "Notes") -> None:
     """Create a checklist on a card and populate it with items."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{_BASE}/cards/{card_id}/checklists",
             params=_params(api_key, token),
-            json={"name": "Notes"},
+            json={"name": title or "Notes"},
         )
         resp.raise_for_status()
         checklist_id = resp.json()["id"]
@@ -135,13 +135,14 @@ async def append_to_card(
     api_key: str,
     token: str,
     fmt: str = "note",
+    checklist_title: str | None = None,
 ) -> None:
     """Append content to an existing card.
 
-    fmt: "note" (plain text), "bullet" (bullet-prefixed lines), "checklist" (new checklist on card).
+    fmt: "note" (plain text appended to description), "checklist" (new Trello checklist on card).
     """
     if fmt == "checklist":
-        await _add_checklist(card_id, _split_into_items(content), api_key, token)
+        await _add_checklist(card_id, _split_into_items(content), api_key, token, title=checklist_title or "Notes")
         return
 
     formatted = _format_as_bullets(content) if fmt == "bullet" else content

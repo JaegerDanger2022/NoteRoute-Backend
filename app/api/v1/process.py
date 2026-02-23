@@ -41,7 +41,8 @@ class ConfirmRequest(BaseModel):
     target_tab_id: str | None = None
     transcript: str | None = None
     doc_title: str | None = None
-    trello_format: str = "note"  # "note" | "bullet" | "checklist"
+    trello_format: str = "note"  # "note" | "checklist"
+    trello_checklist_title: str | None = None
 
 
 class ProcessImageStreamRequest(BaseModel):
@@ -350,6 +351,7 @@ async def confirm_slot(
                 "target_tab_id": body.target_tab_id,
                 "doc_title": body.doc_title,
                 "trello_format": body.trello_format,
+                "trello_checklist_title": body.trello_checklist_title,
             },
         )
         resp.raise_for_status()
