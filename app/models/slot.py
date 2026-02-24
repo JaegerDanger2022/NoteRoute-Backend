@@ -22,7 +22,7 @@ class KnowledgeSlot(Document):
     destination: SlotDestination
     tags: list[str] = []
     read_content: bool = False
-    index_status: Literal["pending", "indexed", "failed"] = "pending"
+    index_status: Literal["pending", "indexing", "indexed", "failed"] = "pending"
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

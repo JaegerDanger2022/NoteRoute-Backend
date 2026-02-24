@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.config import settings
-from app.core.exceptions import NotFoundError, TierLimitError
+from app.core.exceptions import BadRequestError, NotFoundError, TierLimitError
 from app.core.security import decrypt_token
 from app.models.integration import Integration
 from app.models.slot import KnowledgeSlot, SlotDestination
@@ -287,6 +287,8 @@ async def create_slot(
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ) -> dict:
+    if not body.read_content and not (body.description or "").strip():
+        raise BadRequestError("Description is required when Read & index content is off.")
     if current_user.usage.slots_count >= current_user.limits.max_slots:
         raise TierLimitError(
             f"Slot limit reached ({current_user.limits.max_slots}). Upgrade your plan."
@@ -374,6 +376,9 @@ async def bulk_create_slots(
     current_user: User = Depends(get_current_user),
 ) -> list[dict]:
     """Create multiple slots in one request (used by Trello to create one slot per list)."""
+    for req in body.slots:
+        if not req.read_content and not (req.description or "").strip():
+            raise BadRequestError("Description is required when Read & index content is off.")
     available = current_user.limits.max_slots - current_user.usage.slots_count
     if len(body.slots) > available:
         raise TierLimitError(
@@ -478,6 +483,47 @@ async def update_slot(
         logger.exception("vector upsert failed for slot %s", slot.id)
 
     return _slot_to_dict(slot)
+
+
+@router.post("/{slot_id}/reindex", status_code=202)
+async def reindex_slot(
+    slot_id: PydanticObjectId,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Re-read card/page content and re-embed a slot without deleting it.
+
+    Useful when the user originally added a slot without 'Read & index content'
+    and wants to upgrade it, or when the source content has changed significantly.
+    """
+    slot = await KnowledgeSlot.find_one(
+        KnowledgeSlot.id == slot_id,
+        KnowledgeSlot.user_id == current_user.id,
+    )
+    if not slot:
+        raise NotFoundError("Slot not found")
+
+    source = await Source.find_one(
+        Source.id == slot.source_id,
+        Source.user_id == current_user.id,
+    )
+    if not source:
+        raise NotFoundError("Source not found")
+
+    slot.index_status = "indexing"
+    slot.read_content = True
+    await slot.save()
+
+    background_tasks.add_task(
+        _embed_and_enrich_slot,
+        str(slot.id),
+        str(current_user.id),
+        source.name,
+        source.provider,
+        bool(slot.description),
+        bool(slot.tags),
+    )
+    return {"slot_id": str(slot.id), "status": "indexing"}
 
 
 @router.delete("/{slot_id}", status_code=204)
