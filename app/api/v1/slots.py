@@ -201,6 +201,7 @@ async def _embed_and_enrich_slot(
             if raw_content.strip():
                 summary = await claude_svc.summarize_slot_content(slot.name, raw_content, custom_llm)
                 slot.content_sample = summary
+                slot.raw_content = raw_content  # persisted for content_vector embedding
                 await slot.save()
                 logger.info("Content indexed for slot %s", slot_id)
         except Exception:
@@ -579,7 +580,10 @@ async def _embed_slot(
         source_context = f"{source.name} {source.provider} {tags_str} | "
 
     summary_text = source_context + slot.description
-    content_text = source_context + (slot.content_sample or slot.description)
+    # Use raw card/page content for content_vector when available — this preserves
+    # specific terminology (card names, checklist items) that the summary may compress away.
+    # Fall back to summary, then description.
+    content_text = source_context + (slot.raw_content or slot.content_sample or slot.description)
 
     summary_vec, content_vec = await asyncio.gather(
         embed_text(summary_text, custom_bedrock),
