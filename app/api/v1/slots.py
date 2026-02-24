@@ -226,8 +226,11 @@ async def _embed_and_enrich_slot(
     # Step 3: embed and upsert to Pinecone, then mark indexed
     try:
         source = await Source.get(slot.source_id)
-        summary_vec, content_vec = await _embed_slot(slot, source, custom_bedrock)
-        vector_svc.upsert_slot(slot, summary_vec, content_vec, custom_index)
+        summary_vec, content_vecs = await _embed_slot(slot, source, custom_bedrock)
+        if len(content_vecs) > 1:
+            vector_svc.upsert_slot_content_chunks(slot, summary_vec, content_vecs, custom_index)
+        else:
+            vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
         slot.index_status = "indexed"
         await slot.save()
         logger.info("Vector upsert complete for slot %s", slot_id)
@@ -478,8 +481,11 @@ async def update_slot(
     custom_index, custom_bedrock, _ = _resolve_custom_creds(current_user)
     try:
         source = await Source.get(slot.source_id)
-        summary_vec, content_vec = await _embed_slot(slot, source, custom_bedrock)
-        vector_svc.upsert_slot(slot, summary_vec, content_vec, custom_index)
+        summary_vec, content_vecs = await _embed_slot(slot, source, custom_bedrock)
+        if len(content_vecs) > 1:
+            vector_svc.upsert_slot_content_chunks(slot, summary_vec, content_vecs, custom_index)
+        else:
+            vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
     except Exception:
         logger.exception("vector upsert failed for slot %s", slot.id)
 
@@ -572,21 +578,37 @@ async def _embed_slot(
     slot: KnowledgeSlot,
     source: Source | None = None,
     custom_bedrock: CustomBedrockCreds | None = None,
-) -> tuple[list[float], list[float]]:
-    # Include source context in the embedding text for better routing
+) -> tuple[list[float], list[list[float]]]:
+    """Return (summary_vector, content_vectors).
+
+    content_vectors is a list — one entry per chunk when raw_content is present,
+    otherwise a single-element list using the summary/description text.
+    """
     source_context = ""
     if source:
         tags_str = " ".join(source.tags) if source.tags else ""
         source_context = f"{source.name} {source.provider} {tags_str} | "
 
     summary_text = source_context + slot.description
-    # Use raw card/page content for content_vector when available — this preserves
-    # specific terminology (card names, checklist items) that the summary may compress away.
-    # Fall back to summary, then description.
-    content_text = source_context + (slot.raw_content or slot.content_sample or slot.description)
 
-    summary_vec, content_vec = await asyncio.gather(
-        embed_text(summary_text, custom_bedrock),
-        embed_text(content_text, custom_bedrock),
-    )
-    return summary_vec, content_vec
+    if slot.raw_content:
+        # Split raw content into overlapping chunks and embed each independently.
+        # This prevents long lists from diluting minority topics into the overall topic mass.
+        chunks = vector_svc._split_chunks(slot.raw_content)
+        chunk_texts = [source_context + c for c in chunks]
+        # Embed summary + all chunks concurrently
+        results = await asyncio.gather(
+            embed_text(summary_text, custom_bedrock),
+            *[embed_text(ct, custom_bedrock) for ct in chunk_texts],
+        )
+        summary_vec = results[0]
+        content_vecs = list(results[1:])
+    else:
+        content_text = source_context + (slot.content_sample or slot.description)
+        summary_vec, single_content_vec = await asyncio.gather(
+            embed_text(summary_text, custom_bedrock),
+            embed_text(content_text, custom_bedrock),
+        )
+        content_vecs = [single_content_vec]
+
+    return summary_vec, content_vecs

@@ -83,12 +83,29 @@ def check_custom_index_exists(creds: CustomIndexCreds) -> bool:
         return False
 
 
+_CHUNK_CHARS = 6000   # ~1500 tokens — wide enough for ~25 cards, narrow enough to preserve minority topics
+_CHUNK_OVERLAP = 400  # ~100 tokens of overlap so card at a boundary appears in both chunks
+
+
+def _split_chunks(text: str, size: int = _CHUNK_CHARS, overlap: int = _CHUNK_OVERLAP) -> list[str]:
+    """Split text into overlapping character-level chunks. Returns at least one chunk."""
+    if len(text) <= size:
+        return [text]
+    chunks = []
+    start = 0
+    while start < len(text):
+        chunks.append(text[start:start + size])
+        start += size - overlap
+    return chunks
+
+
 def upsert_slot(
     slot: KnowledgeSlot,
     summary_vector: list[float],
     content_vector: list[float],
     custom: CustomIndexCreds | None = None,
 ) -> None:
+    """Upsert summary vector (single) and content vector (single, no raw content)."""
     idx = _get_index(custom)
     slot_id = str(slot.id)
     metadata = {
@@ -97,6 +114,31 @@ def upsert_slot(
     }
     idx.upsert(vectors=[{"id": slot_id, "values": summary_vector, "metadata": metadata}], namespace=_NS_SUMMARY)
     idx.upsert(vectors=[{"id": slot_id, "values": content_vector, "metadata": metadata}], namespace=_NS_CONTENT)
+
+
+def upsert_slot_content_chunks(
+    slot: KnowledgeSlot,
+    summary_vector: list[float],
+    chunk_vectors: list[list[float]],
+    custom: CustomIndexCreds | None = None,
+) -> None:
+    """Upsert summary vector (single) + one content vector per chunk.
+
+    Chunk IDs are stored as '{slot_id}#0', '{slot_id}#1', … so the search node
+    can strip the suffix to recover the parent slot_id.
+    """
+    idx = _get_index(custom)
+    slot_id = str(slot.id)
+    base_meta = {
+        "user_id": str(slot.user_id),
+        "source_id": str(slot.source_id),
+    }
+    idx.upsert(vectors=[{"id": slot_id, "values": summary_vector, "metadata": base_meta}], namespace=_NS_SUMMARY)
+    chunk_upserts = [
+        {"id": f"{slot_id}#{i}", "values": vec, "metadata": base_meta}
+        for i, vec in enumerate(chunk_vectors)
+    ]
+    idx.upsert(vectors=chunk_upserts, namespace=_NS_CONTENT)
 
 
 def search_slots(
@@ -137,7 +179,20 @@ def search_slots(
 
 
 def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None) -> None:
+    """Delete the summary vector and all content chunks for a slot."""
     idx = _get_index(custom)
-    for ns in (_NS_SUMMARY, _NS_CONTENT):
-        idx.delete(ids=[slot_id], namespace=ns)
-        logger.info("Deleted vector %s from namespace %s", slot_id, ns)
+    # Summary namespace: always a single vector with the bare slot_id
+    idx.delete(ids=[slot_id], namespace=_NS_SUMMARY)
+    logger.info("Deleted vector %s from namespace %s", slot_id, _NS_SUMMARY)
+    # Content namespace: may be a single vector (slot_id) or chunks (slot_id#0, slot_id#1, …).
+    # Delete the bare id first, then sweep chunks by prefix via list_paginated.
+    idx.delete(ids=[slot_id], namespace=_NS_CONTENT)
+    try:
+        chunk_ids: list[str] = []
+        for page in idx.list_paginated(prefix=f"{slot_id}#", namespace=_NS_CONTENT):
+            chunk_ids.extend(page.vectors if page.vectors else [])
+        if chunk_ids:
+            idx.delete(ids=chunk_ids, namespace=_NS_CONTENT)
+            logger.info("Deleted %d content chunks for slot %s", len(chunk_ids), slot_id)
+    except Exception:
+        logger.warning("Chunk cleanup via list_paginated failed for slot %s — chunks may remain", slot_id)
