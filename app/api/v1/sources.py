@@ -232,7 +232,7 @@ async def list_resources(
         access_token = decrypt_token(integration.tokens.access_token)
 
     if source.provider == "notion":
-        return await notion_svc.list_pages(access_token)
+        return await notion_svc.list_top_level_pages(access_token)
     elif source.provider == "google":
         return await gdocs_svc.list_documents(access_token)
     elif source.provider == "slack":
@@ -275,7 +275,9 @@ async def list_resource_children(
     else:
         access_token = decrypt_token(integration.tokens.access_token)
 
-    if source.provider == "todoist":
+    if source.provider == "notion":
+        return await notion_svc.list_child_pages(resource_id, access_token)
+    elif source.provider == "todoist":
         return await todoist_svc.list_sections(resource_id, access_token)
     elif source.provider == "trello":
         return await trello_svc.list_lists(resource_id, settings.TRELLO_API_KEY, access_token)

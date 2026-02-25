@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 async def list_pages(access_token: str) -> list[dict]:
-    """List accessible Notion pages."""
+    """List all accessible Notion pages (flat). Used internally for parent-page lookup."""
     client = AsyncClient(auth=access_token)
     results = []
     cursor = None
@@ -28,6 +28,64 @@ async def list_pages(access_token: str) -> list[dict]:
                 "url": page.get("url"),
             })
 
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+
+    return results
+
+
+async def list_top_level_pages(access_token: str) -> list[dict]:
+    """List only workspace-level (top-level) Notion pages with has_children flag."""
+    client = AsyncClient(auth=access_token)
+    results = []
+    cursor = None
+
+    while True:
+        kwargs: dict = {
+            "filter": {"property": "object", "value": "page"},
+            "page_size": 100,
+        }
+        if cursor:
+            kwargs["start_cursor"] = cursor
+
+        resp = await client.search(**kwargs)
+        for page in resp.get("results", []):
+            parent = page.get("parent", {})
+            if parent.get("type") == "workspace":
+                results.append({
+                    "id": page["id"],
+                    "name": _extract_title(page),
+                    "url": page.get("url"),
+                    "has_children": page.get("has_children", False),
+                })
+
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+
+    return results
+
+
+async def list_child_pages(page_id: str, access_token: str) -> list[dict]:
+    """Return direct child pages of a page with has_children flag."""
+    client = AsyncClient(auth=access_token)
+    results = []
+    cursor = None
+
+    while True:
+        kwargs: dict = {"block_id": page_id, "page_size": 100}
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        resp = await client.blocks.children.list(**kwargs)
+        for block in resp.get("results", []):
+            if block.get("type") == "child_page":
+                results.append({
+                    "id": block["id"],
+                    "name": block.get("child_page", {}).get("title") or "Untitled",
+                    "url": None,
+                    "has_children": block.get("has_children", False),
+                })
         if not resp.get("has_more"):
             break
         cursor = resp.get("next_cursor")
@@ -91,11 +149,13 @@ async def fetch_page_text(
     page_id: str,
     access_token: str,
     max_chars: int = 100000,
+    include_subpages: bool = True,
     _depth: int = 0,
 ) -> str:
     """Fetch plain text from a Notion page's blocks (paginated), capped at max_chars.
 
-    Recursively fetches child pages up to 5 levels deep.
+    If include_subpages=True, recursively fetches child pages up to 5 levels deep.
+    If include_subpages=False, only fetches the direct blocks of this page.
     """
     if _depth > 5:
         return ""
@@ -110,14 +170,16 @@ async def fetch_page_text(
         resp = await client.blocks.children.list(**kwargs)
         for block in resp.get("results", []):
             if block.get("type") == "child_page":
-                used = sum(len(p) for p in parts)
-                remaining = max_chars - used
-                if remaining > 0:
-                    sub = await fetch_page_text(
-                        block["id"], access_token, remaining, _depth + 1
-                    )
-                    if sub:
-                        parts.append(sub)
+                if include_subpages:
+                    used = sum(len(p) for p in parts)
+                    remaining = max_chars - used
+                    if remaining > 0:
+                        sub = await fetch_page_text(
+                            block["id"], access_token, remaining, include_subpages, _depth + 1
+                        )
+                        if sub:
+                            parts.append(sub)
+                # else: skip child_page blocks entirely
             else:
                 text = _extract_block_text(block)
                 if text:

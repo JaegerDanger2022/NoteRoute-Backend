@@ -31,6 +31,7 @@ class SlotCreateRequest(BaseModel):
     content_sample: str = ""
     destination: SlotDestination
     tags: list[str] = []
+    include_subpages: bool = True  # Notion only: recursively index child pages
     read_content: bool = False
 
 
@@ -127,7 +128,7 @@ async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: s
     access_token = decrypt_token(integration.tokens.access_token)
     resource_id = slot.destination.resource_id
     if provider == "notion":
-        return await notion_svc.fetch_page_text(resource_id, access_token)
+        return await notion_svc.fetch_page_text(resource_id, access_token, include_subpages=slot.include_subpages)
     elif provider == "google":
         return await gdocs_svc.fetch_document_text(resource_id, access_token)
     elif provider == "slack":
@@ -314,6 +315,7 @@ async def create_slot(
         content_sample=body.content_sample,
         destination=body.destination,
         tags=body.tags,
+        include_subpages=body.include_subpages,
         read_content=body.read_content,
     )
     await slot.insert()

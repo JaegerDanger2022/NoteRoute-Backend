@@ -23,6 +23,7 @@ class KnowledgeSlot(Document):
     destination: SlotDestination
     tags: list[str] = []
     notion_parent_page_id: str | None = None  # Parent page for Notion save-as-new-slot
+    include_subpages: bool = True  # Whether to recursively index child pages (Notion only)
     read_content: bool = False
     index_status: Literal["pending", "indexing", "indexed", "failed"] = "pending"
     is_active: bool = True
