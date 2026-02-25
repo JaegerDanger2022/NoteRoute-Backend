@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
+from beanie.operators import Set
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -123,12 +124,14 @@ async def update_source(
     if not source:
         raise NotFoundError("Source not found")
 
+    updates: dict = {Source.updated_at: datetime.now(timezone.utc)}
     if body.name is not None:
+        updates[Source.name] = body.name
         source.name = body.name
     if body.tags is not None:
+        updates[Source.tags] = body.tags
         source.tags = body.tags
-    source.updated_at = datetime.now(timezone.utc)
-    await source.save()
+    await source.update(Set(updates))
     return _source_to_dict(source)
 
 

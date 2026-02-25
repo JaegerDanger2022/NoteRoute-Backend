@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
+from beanie.operators import Set
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 
@@ -457,6 +458,8 @@ async def update_slot(
     if not slot:
         raise NotFoundError("Slot not found")
 
+    updates: dict = {KnowledgeSlot.updated_at: datetime.now(timezone.utc)}
+
     if body.source_id is not None:
         new_source_id = PydanticObjectId(body.source_id)
         source = await Source.find_one(
@@ -466,18 +469,22 @@ async def update_slot(
         )
         if not source:
             raise NotFoundError("Source not found")
+        updates[KnowledgeSlot.source_id] = new_source_id
         slot.source_id = new_source_id
     if body.name is not None:
+        updates[KnowledgeSlot.name] = body.name
         slot.name = body.name
     if body.description is not None:
+        updates[KnowledgeSlot.description] = body.description
         slot.description = body.description
     if body.content_sample is not None:
+        updates[KnowledgeSlot.content_sample] = body.content_sample
         slot.content_sample = body.content_sample
     if body.tags is not None:
+        updates[KnowledgeSlot.tags] = body.tags
         slot.tags = body.tags
 
-    slot.updated_at = datetime.now(timezone.utc)
-    await slot.save()
+    await slot.update(Set(updates))
 
     custom_index, custom_bedrock, _ = _resolve_custom_creds(current_user)
     try:

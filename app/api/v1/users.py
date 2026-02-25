@@ -12,6 +12,7 @@ from app.models.user import CustomIndexConfig, CustomLLMConfig, User
 from app.services import vector_svc
 from app.services.vector_svc import CustomIndexCreds
 from beanie import PydanticObjectId
+from beanie.operators import Set
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -49,9 +50,8 @@ async def update_me(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     if body.display_name is not None:
-        current_user.display_name = body.display_name
-        await current_user.save()
-    return {"id": str(current_user.id), "display_name": current_user.display_name}
+        await current_user.update(Set({User.display_name: body.display_name}))
+    return {"id": str(current_user.id), "display_name": body.display_name or current_user.display_name}
 
 
 class CustomIndexRequest(BaseModel):
@@ -88,7 +88,7 @@ async def _provision_index_background(user_id: str, index_name: str, encrypted_k
         user.custom_index.provisioned_at = datetime.now(timezone.utc)
     except Exception:
         user.custom_index.index_status = "error"
-    await user.save()
+    await user.update(Set({User.custom_index: user.custom_index}))
 
 
 @router.post("/me/custom-index", status_code=201)
@@ -110,8 +110,7 @@ async def connect_custom_index(
         bedrock_aws_secret_access_key=encrypt_token(body.bedrock_aws_secret_access_key) if body.bedrock_aws_secret_access_key else None,
         bedrock_aws_region=body.bedrock_aws_region,
     )
-    current_user.custom_index = cfg
-    await current_user.save()
+    await current_user.update(Set({User.custom_index: cfg}))
 
     background_tasks.add_task(
         _provision_index_background,
@@ -137,15 +136,14 @@ async def get_custom_index(current_user: User = Depends(get_current_user)) -> di
         exists = await asyncio.to_thread(vector_svc.check_custom_index_exists, creds)
         if not exists:
             cfg.index_status = "deleted"
-            await current_user.save()
+            await current_user.update(Set({User.custom_index: cfg}))
 
     return _custom_index_response(cfg)
 
 
 @router.delete("/me/custom-index", status_code=204)
 async def disconnect_custom_index(current_user: User = Depends(get_current_user)) -> None:
-    current_user.custom_index = None
-    await current_user.save()
+    await current_user.update(Set({User.custom_index: None}))
 
 
 @router.get("/internal/{user_id}/custom-index-creds")
@@ -197,11 +195,10 @@ async def connect_custom_llm(
     if body.provider not in ("openai", "anthropic"):
         from fastapi import HTTPException
         raise HTTPException(status_code=422, detail="provider must be 'openai' or 'anthropic'")
-    current_user.custom_llm = CustomLLMConfig(
+    await current_user.update(Set({User.custom_llm: CustomLLMConfig(
         provider=body.provider,  # type: ignore[arg-type]
         api_key=encrypt_token(body.api_key),
-    )
-    await current_user.save()
+    )}))
     return {"provider": body.provider}
 
 
@@ -214,8 +211,7 @@ async def get_custom_llm(current_user: User = Depends(get_current_user)) -> dict
 
 @router.delete("/me/custom-llm", status_code=204)
 async def disconnect_custom_llm(current_user: User = Depends(get_current_user)) -> None:
-    current_user.custom_llm = None
-    await current_user.save()
+    await current_user.update(Set({User.custom_llm: None}))
 
 
 @router.patch("/me/active-source")
@@ -224,8 +220,7 @@ async def set_active_source(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     if body.source_id is None:
-        current_user.active_source_id = None
-        await current_user.save()
+        await current_user.update(Set({User.active_source_id: None}))
         return {"active_source_id": None}
 
     source_id = PydanticObjectId(body.source_id)
@@ -237,6 +232,5 @@ async def set_active_source(
     if not source:
         raise NotFoundError("Source not found")
 
-    current_user.active_source_id = source_id
-    await current_user.save()
+    await current_user.update(Set({User.active_source_id: source_id}))
     return {"active_source_id": str(source_id)}
