@@ -58,10 +58,10 @@ async def list_all_pages(access_token: str) -> list[dict]:
         for page in resp.get("results", []):
             parent = page.get("parent", {})
             parent_type = parent.get("type", "")
-            raw_parent_id = parent.get("page_id") if parent_type == "page" else None
-            # Notion sometimes returns IDs without hyphens in parent.page_id;
-            # normalise both to hyphenated UUID format so parent_id == id comparisons work.
-            page_id = page["id"]  # search results always return hyphenated IDs
+            # Notion returns type="page_id" for page-parented pages (not "page")
+            raw_parent_id = parent.get("page_id") if parent_type == "page_id" else None
+            # Normalise to hyphenated UUID — parent.page_id is sometimes unhyphenated
+            page_id = page["id"]
             parent_id = (
                 f"{raw_parent_id[0:8]}-{raw_parent_id[8:12]}-{raw_parent_id[12:16]}-{raw_parent_id[16:20]}-{raw_parent_id[20:]}"
                 if raw_parent_id and "-" not in raw_parent_id
