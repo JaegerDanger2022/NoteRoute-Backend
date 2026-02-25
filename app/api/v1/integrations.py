@@ -73,7 +73,7 @@ async def connect_integration(
             me_resp.raise_for_status()
             me = me_resp.json()
         bot_id = me.get("id", "unknown")
-        workspace_name = me.get("name") or "Notion Workspace"
+        workspace_name = "Notion"
         provider_email = me.get("person", {}).get("email")
         encrypted = encrypt_token(settings.NOTION_INTEGRATION_TOKEN)
         existing = await Integration.find_one(
