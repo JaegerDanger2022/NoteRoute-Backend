@@ -22,6 +22,7 @@ class KnowledgeSlot(Document):
     raw_content: str = ""      # Raw fetched text used for content_vector embedding
     destination: SlotDestination
     tags: list[str] = []
+    notion_parent_page_id: str | None = None  # Parent page for Notion save-as-new-slot
     read_content: bool = False
     index_status: Literal["pending", "indexing", "indexed", "failed"] = "pending"
     is_active: bool = True

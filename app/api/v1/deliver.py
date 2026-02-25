@@ -58,6 +58,7 @@ class DeliverRequest(BaseModel):
     trello_format: str = "note"  # "note" | "checklist"
     trello_checklist_title: str | None = None
     trello_checklist_id: str | None = None
+    notion_parent_page_id: str | None = None  # parent page when save_as_slot=True for notion
 
 
 @router.post("")
@@ -79,7 +80,7 @@ async def deliver(body: DeliverRequest) -> dict:
 
     try:
         if body.save_as_slot:
-            result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title)
+            result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title, body.notion_parent_page_id)
         else:
             result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary, body.trello_format, body.trello_checklist_title, body.trello_checklist_id)
 
@@ -203,6 +204,7 @@ async def _save_as_new_slot(
     summary: str,
     route: Route,
     doc_title: str | None = None,
+    notion_parent_page_id: str | None = None,
 ) -> dict:
     """Create a new resource in the provider + save it as a KnowledgeSlot."""
     if not user.active_source_id:
@@ -230,11 +232,12 @@ async def _save_as_new_slot(
 
     # Create the resource in the provider
     if source.provider == "notion":
-        # For Notion, we need a parent page. Use the first accessible page as parent.
-        pages = await notion_svc.list_pages(access_token)
-        if not pages:
-            raise ValueError("No Notion pages available to create child page under")
-        parent_id = pages[0]["id"]
+        parent_id = notion_parent_page_id
+        if not parent_id:
+            pages = await notion_svc.list_pages(access_token)
+            if not pages:
+                raise ValueError("No Notion pages available to create child page under")
+            parent_id = pages[0]["id"]
         resource = await notion_svc.create_page(parent_id, title, content, access_token)
     elif source.provider == "google":
         resource = await gdocs_svc.create_document(title, content, access_token)
