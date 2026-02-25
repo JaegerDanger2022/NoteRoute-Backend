@@ -56,12 +56,16 @@ async def list_all_pages(access_token: str) -> list[dict]:
 
         resp = await client.search(**kwargs)
         for page in resp.get("results", []):
-            parent_type = page.get("parent", {}).get("type", "")
+            parent = page.get("parent", {})
+            parent_type = parent.get("type", "")
+            parent_id = parent.get("page_id") if parent_type == "page" else None
             title = _extract_title(page)
             name = title if parent_type == "workspace" else f"· {title}"
             results.append({
                 "id": page["id"],
                 "name": name,
+                "title": title,       # raw title without prefix, used for search
+                "parent_id": parent_id,
                 "url": page.get("url"),
             })
 
