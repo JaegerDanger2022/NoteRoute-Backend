@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 
 async def list_pages(access_token: str) -> list[dict]:
-    """List all accessible Notion pages (flat). Used internally for parent-page lookup."""
+    """List all accessible Notion pages flat. Used internally for parent-page lookup."""
     client = AsyncClient(auth=access_token)
     results = []
     cursor = None
@@ -35,8 +35,13 @@ async def list_pages(access_token: str) -> list[dict]:
     return results
 
 
-async def list_top_level_pages(access_token: str) -> list[dict]:
-    """List only workspace-level (top-level) Notion pages with has_children flag."""
+async def list_all_pages(access_token: str) -> list[dict]:
+    """List all accessible Notion pages for the resource picker.
+
+    Top-level (workspace-parent) pages are returned as-is.
+    Sub-pages (page-parent) are prefixed with '· ' so the user can
+    distinguish hierarchy in a flat list.
+    """
     client = AsyncClient(auth=access_token)
     results = []
     cursor = None
@@ -51,14 +56,14 @@ async def list_top_level_pages(access_token: str) -> list[dict]:
 
         resp = await client.search(**kwargs)
         for page in resp.get("results", []):
-            parent = page.get("parent", {})
-            if parent.get("type") == "workspace":
-                results.append({
-                    "id": page["id"],
-                    "name": _extract_title(page),
-                    "url": page.get("url"),
-                    "has_children": page.get("has_children", False),
-                })
+            parent_type = page.get("parent", {}).get("type", "")
+            title = _extract_title(page)
+            name = title if parent_type == "workspace" else f"· {title}"
+            results.append({
+                "id": page["id"],
+                "name": name,
+                "url": page.get("url"),
+            })
 
         if not resp.get("has_more"):
             break

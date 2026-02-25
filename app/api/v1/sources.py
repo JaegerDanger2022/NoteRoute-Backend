@@ -232,7 +232,7 @@ async def list_resources(
         access_token = decrypt_token(integration.tokens.access_token)
 
     if source.provider == "notion":
-        return await notion_svc.list_top_level_pages(access_token)
+        return await notion_svc.list_all_pages(access_token)
     elif source.provider == "google":
         return await gdocs_svc.list_documents(access_token)
     elif source.provider == "slack":
