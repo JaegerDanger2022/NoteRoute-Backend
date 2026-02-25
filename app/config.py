@@ -41,10 +41,8 @@ class Settings(BaseSettings):
         """Return LANGGRAPH_INTERNAL_URL with any trailing slash stripped."""
         return self.LANGGRAPH_INTERNAL_URL.rstrip("/")
 
-    # Notion — OAuth public integration
-    NOTION_CLIENT_ID: str = ""
-    NOTION_CLIENT_SECRET: str = ""
-    NOTION_REDIRECT_URI: str = ""
+    # Notion — internal integration token
+    NOTION_INTEGRATION_TOKEN: str = ""
 
     # OAuth — Google
     GOOGLE_CLIENT_ID: str = ""

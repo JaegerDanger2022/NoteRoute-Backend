@@ -59,15 +59,48 @@ async def connect_integration(
         state += "|web"
 
     if provider == "notion":
-        url = (
-            "https://api.notion.com/v1/oauth/authorize"
-            f"?client_id={settings.NOTION_CLIENT_ID}"
-            f"&response_type=code"
-            f"&owner=user"
-            f"&redirect_uri={settings.NOTION_REDIRECT_URI}"
-            f"&state={state}"
+        # Internal integration — no OAuth flow. Verify the shared token and store it.
+        if not settings.NOTION_INTEGRATION_TOKEN:
+            raise ValueError("NOTION_INTEGRATION_TOKEN is not configured")
+        async with httpx.AsyncClient() as client:
+            me_resp = await client.get(
+                "https://api.notion.com/v1/users/me",
+                headers={
+                    "Authorization": f"Bearer {settings.NOTION_INTEGRATION_TOKEN}",
+                    "Notion-Version": "2022-06-28",
+                },
+            )
+            me_resp.raise_for_status()
+            me = me_resp.json()
+        bot_id = me.get("id", "unknown")
+        workspace_name = me.get("name") or "Notion Workspace"
+        provider_email = me.get("person", {}).get("email")
+        encrypted = encrypt_token(settings.NOTION_INTEGRATION_TOKEN)
+        existing = await Integration.find_one(
+            Integration.user_id == current_user.id,
+            Integration.provider == "notion",
         )
-        return {"status": "redirect", "provider": "notion", "url": url}
+        if existing:
+            existing.tokens.access_token = encrypted
+            existing.provider_email = provider_email
+            existing.is_active = True
+            await existing.save()
+        else:
+            await Integration(
+                user_id=current_user.id,
+                provider="notion",
+                tokens=OAuthTokens(access_token=encrypted),
+                provider_user_id=bot_id,
+                provider_email=provider_email,
+            ).insert()
+        await _upsert_source(
+            user=current_user,
+            provider="notion",
+            name=workspace_name,
+            connected_account_id=bot_id,
+            connected_account_email=provider_email,
+        )
+        return {"status": "connected", "provider": "notion"}
 
     elif provider == "google":
         url = (
@@ -205,9 +238,7 @@ async def oauth_callback(provider: str, code: str, state: str) -> RedirectRespon
     is_upgrade = state.endswith("__upgrade") or "|web__upgrade" in state
     is_web = "|web" in state
 
-    if provider == "notion":
-        await _handle_notion_callback(code, state)
-    elif provider == "google":
+    if provider == "google":
         await _handle_google_callback(code, state)
     elif provider == "slack":
         await _handle_slack_callback(code, state)
@@ -266,79 +297,6 @@ async def disconnect_integration(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-async def _handle_notion_callback(code: str, state: str) -> None:
-    """Exchange Notion auth code for a per-user OAuth token, store, upsert Source."""
-    raw_user_id = state.removesuffix("__upgrade").split("|")[0]
-
-    async with httpx.AsyncClient() as client:
-        token_resp = await client.post(
-            "https://api.notion.com/v1/oauth/token",
-            json={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": settings.NOTION_REDIRECT_URI,
-            },
-            auth=(settings.NOTION_CLIENT_ID, settings.NOTION_CLIENT_SECRET),
-        )
-        token_resp.raise_for_status()
-        data = token_resp.json()
-
-    access_token = data["access_token"]
-    workspace_name = data.get("workspace_name")
-    bot_id = data.get("bot_id", "unknown")
-    owner = data.get("owner", {})
-    person = owner.get("person", {})
-    provider_email = person.get("email")
-
-    # Notion OAuth token response often omits email; fetch it from /users/me
-    if not provider_email:
-        async with httpx.AsyncClient() as client:
-            me_resp = await client.get(
-                "https://api.notion.com/v1/users/me",
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Notion-Version": "2022-06-28",
-                },
-            )
-            if me_resp.status_code == 200:
-                me = me_resp.json()
-                provider_email = me.get("person", {}).get("email")
-
-    user_id = PydanticObjectId(raw_user_id)
-    user = await User.get(user_id)
-    if not user:
-        return
-
-    encrypted = encrypt_token(access_token)
-    existing = await Integration.find_one(
-        Integration.user_id == user_id,
-        Integration.provider == "notion",
-    )
-    if existing:
-        existing.tokens.access_token = encrypted
-        existing.provider_email = provider_email
-        existing.workspace_name = workspace_name
-        existing.is_active = True
-        await existing.save()
-    else:
-        await Integration(
-            user_id=user_id,
-            provider="notion",
-            tokens=OAuthTokens(access_token=encrypted),
-            provider_user_id=bot_id,
-            provider_email=provider_email,
-            workspace_name=workspace_name,
-        ).insert()
-
-    await _upsert_source(
-        user=user,
-        provider="notion",
-        name=workspace_name or "Notion Workspace",
-        connected_account_id=bot_id,
-        connected_account_email=provider_email,
-    )
-
 
 async def _handle_google_callback(code: str, state: str) -> None:
     """Exchange Google auth code for tokens, store, upsert Source."""
