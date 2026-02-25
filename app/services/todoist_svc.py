@@ -109,25 +109,24 @@ async def create_task(
     }
 
 
-async def fetch_project_tasks(
-    project_id: str, access_token: str, max_chars: int = 50000
-) -> str:
-    """Return task titles from a project joined by newlines, capped at max_chars."""
+async def _fetch_tasks(params: dict, access_token: str, max_chars: int) -> str:
+    """Shared helper: fetch tasks with given filter params, return title + description lines."""
     async with httpx.AsyncClient() as client:
         resp = await client.get(
             f"{_BASE}/tasks",
-            params={"project_id": project_id},
+            params=params,
             headers=_headers(access_token),
         )
         resp.raise_for_status()
         data = resp.json()
-    # API v1 returns a paginated wrapper: {"results": [...], "next_cursor": ...}
     tasks = data.get("results", data) if isinstance(data, dict) else data
 
     lines = []
     total = 0
     for task in tasks:
-        line = task.get("content", "").strip()
+        title = task.get("content", "").strip()
+        desc = task.get("description", "").strip()
+        line = f"{title}: {desc}" if desc else title
         if line:
             lines.append(line)
             total += len(line)
@@ -135,3 +134,17 @@ async def fetch_project_tasks(
                 break
 
     return "\n".join(lines)[:max_chars]
+
+
+async def fetch_project_tasks(
+    project_id: str, access_token: str, max_chars: int = 50000
+) -> str:
+    """Return task titles+descriptions from a project joined by newlines."""
+    return await _fetch_tasks({"project_id": project_id}, access_token, max_chars)
+
+
+async def fetch_section_tasks(
+    section_id: str, access_token: str, max_chars: int = 50000
+) -> str:
+    """Return task titles+descriptions from a section joined by newlines."""
+    return await _fetch_tasks({"section_id": section_id}, access_token, max_chars)

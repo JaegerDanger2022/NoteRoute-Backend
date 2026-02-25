@@ -133,11 +133,10 @@ async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: s
     elif provider == "slack":
         return await slack_svc.fetch_channel_messages(resource_id, access_token)
     elif provider == "todoist":
-        try:
-            return await todoist_svc.fetch_project_tasks(resource_id, access_token)
-        except Exception:
-            logger.warning("Could not fetch Todoist tasks for resource_id=%s (may be a section)", resource_id)
-            return ""
+        # Section slots (parent_slot_id set) use section_id; project slots use project_id
+        if slot.parent_slot_id is not None:
+            return await todoist_svc.fetch_section_tasks(resource_id, access_token)
+        return await todoist_svc.fetch_project_tasks(resource_id, access_token)
     elif provider == "trello":
         return await trello_svc.fetch_list_cards(resource_id, settings.TRELLO_API_KEY, access_token)
     return ""
