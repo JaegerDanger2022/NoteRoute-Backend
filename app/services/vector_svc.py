@@ -76,14 +76,24 @@ def provision_custom_index(creds: CustomIndexCreds) -> None:
         logger.info("Custom Pinecone index already exists: %s", creds.index_name)
 
 
-def check_custom_index_exists(creds: CustomIndexCreds) -> bool:
-    """Return True if the user's index still exists in Pinecone."""
+def check_custom_index_exists(creds: CustomIndexCreds) -> str:
+    """Check whether the user's custom index is reachable.
+
+    Returns:
+        "exists"      — index found and API key valid
+        "not_found"   — API key valid but index no longer exists
+        "key_invalid" — API key rejected (401/403)
+    """
     try:
         pc = Pinecone(api_key=creds.pinecone_api_key)
         existing = [i.name for i in pc.list_indexes()]
-        return creds.index_name in existing
-    except Exception:
-        return False
+        return "exists" if creds.index_name in existing else "not_found"
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "401" in msg or "403" in msg or "unauthorized" in msg or "forbidden" in msg or "invalid api key" in msg:
+            return "key_invalid"
+        # Network errors etc. — treat conservatively as key problem (don't mark index deleted)
+        return "key_invalid"
 
 
 _CHUNK_CHARS = 6000   # ~1500 tokens — wide enough for ~25 cards, narrow enough to preserve minority topics

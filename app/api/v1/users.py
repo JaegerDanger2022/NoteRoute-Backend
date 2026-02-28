@@ -113,15 +113,18 @@ async def get_custom_index(current_user: User = Depends(get_current_user)) -> di
         return {"index_status": "none"}
 
     cfg = current_user.custom_index
-    # Check if user deleted it from Pinecone dashboard
+    # Check if user deleted the index or revoked the API key from Pinecone dashboard
     if cfg.index_status == "ready":
         creds = CustomIndexCreds(
             pinecone_api_key=decrypt_token(cfg.pinecone_api_key),
             index_name=cfg.index_name,
         )
-        exists = await asyncio.to_thread(vector_svc.check_custom_index_exists, creds)
-        if not exists:
+        check = await asyncio.to_thread(vector_svc.check_custom_index_exists, creds)
+        if check == "not_found":
             cfg.index_status = "deleted"
+            await current_user.update(Set({User.custom_index: cfg}))
+        elif check == "key_invalid":
+            cfg.index_status = "key_invalid"
             await current_user.update(Set({User.custom_index: cfg}))
 
     return _custom_index_response(cfg)
