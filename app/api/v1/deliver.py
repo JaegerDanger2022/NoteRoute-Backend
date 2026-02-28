@@ -46,6 +46,33 @@ async def _get_access_token(integration: Integration) -> str:
     return decrypt_token(integration.tokens.access_token)
 
 
+def _is_token_revoked(err_str: str) -> bool:
+    """Return True if the error looks like a provider-side token revocation or 401."""
+    lowered = err_str.lower()
+    return any(kw in lowered for kw in ("401", "unauthorized", "invalid_token", "token revoked", "token expired", "invalid credentials", "403", "forbidden"))
+
+
+async def _mark_integration_inactive(user: User, exc: Exception) -> None:
+    """Best-effort: mark the integration for the user's active source as inactive."""
+    try:
+        source = await Source.get(user.active_source_id) if user.active_source_id else None
+        if not source:
+            return
+        integration = await Integration.find_one(
+            Integration.user_id == user.id,
+            Integration.provider == source.provider,
+        )
+        if integration and integration.is_active:
+            integration.is_active = False
+            await integration.save()
+            logger.warning(
+                "Marked %s integration inactive for user %s due to token error: %s",
+                source.provider, user.id, exc,
+            )
+    except Exception:
+        logger.exception("Could not mark integration inactive after token error")
+
+
 class DeliverRequest(BaseModel):
     run_id: str
     slot_id: str | None = None
@@ -99,11 +126,15 @@ async def deliver(body: DeliverRequest) -> dict:
 
     except Exception as exc:
         logger.exception("Delivery failed for run_id=%s", body.run_id)
+        err_str = str(exc)
+        # If the provider rejected the token, mark the integration inactive so the user knows
+        if _is_token_revoked(err_str):
+            await _mark_integration_inactive(user, exc)
         route.status = "failed"
         route.completed_at = now
         route.events.append(RouteEvent(
             event_type="failed",
-            metadata={"error": str(exc)},
+            metadata={"error": err_str},
         ))
         await route.save()
         raise
@@ -185,11 +216,11 @@ async def _reindex_slot(slot: KnowledgeSlot, source: Source, new_content: str) -
         slot.updated_at = datetime.now(timezone.utc)
         await slot.save()
 
-        # Re-embed with updated content; summary vector uses description (stable)
+        # Re-embed with updated content; summary vector uses name + description for strong signal
         tags_str = " ".join(source.tags) if source.tags else ""
         source_context = f"{source.name} {source.provider} {tags_str} | "
         summary_vec, content_vec = await asyncio.gather(
-            embed_text(source_context + slot.description),
+            embed_text(source_context + slot.name + ": " + slot.description),
             embed_text(source_context + slot.content_sample),
         )
         vector_svc.upsert_slot(slot, summary_vec, content_vec)
@@ -298,7 +329,7 @@ async def _save_as_new_slot(
         tags_str = " ".join(source.tags) if source.tags else ""
         source_context = f"{source.name} {source.provider} {tags_str} | "
         summary_vec, content_vec = await asyncio.gather(
-            embed_text(source_context + slot.description),
+            embed_text(source_context + slot.name + ": " + slot.description),
             embed_text(source_context + slot.content_sample),
         )
         vector_svc.upsert_slot(slot, summary_vec, content_vec)

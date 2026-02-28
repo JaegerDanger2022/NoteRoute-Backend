@@ -7,13 +7,16 @@ from pydantic import BaseModel, Field
 
 
 class TierLimits(BaseModel):
-    max_sources: int = 3
-    max_slots: int = 50
+    max_sources: int = 1
+    max_slots: int = 20
+    max_image_inputs_per_month: int = 3
 
 
 class UsageCounters(BaseModel):
     slots_count: int = 0
     sources_count: int = 0
+    image_inputs_this_month: int = 0
+    image_inputs_month: str = ""  # "YYYY-MM" — resets when month changes
 
 
 class CustomIndexConfig(BaseModel):
@@ -38,9 +41,10 @@ class User(Document):
     firebase_uid: str
     email: str
     display_name: str | None = None
-    tier: Literal["free", "pro", "team"] = "free"
+    tier: Literal["free", "pro"] = "free"
     limits: TierLimits = Field(default_factory=TierLimits)
     usage: UsageCounters = Field(default_factory=UsageCounters)
+    revenuecat_id: str | None = None  # RevenueCat app user ID (set on first webhook)
     active_source_id: PydanticObjectId | None = None
     custom_index: CustomIndexConfig | None = None
     custom_llm: Optional[CustomLLMConfig] = None

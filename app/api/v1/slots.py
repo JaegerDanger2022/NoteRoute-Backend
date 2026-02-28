@@ -502,8 +502,12 @@ async def update_slot(
             vector_svc.upsert_slot_content_chunks(slot, summary_vec, content_vecs, custom_index)
         else:
             vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
+        slot.index_status = "indexed"
+        await slot.save()
     except Exception:
         logger.exception("vector upsert failed for slot %s", slot.id)
+        slot.index_status = "failed"
+        await slot.save()
 
     return _slot_to_dict(slot)
 

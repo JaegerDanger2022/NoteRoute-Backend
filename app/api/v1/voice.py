@@ -1,7 +1,9 @@
 import uuid
+from datetime import datetime, timezone
 
 import boto3
-from fastapi import APIRouter, Depends, Query
+from beanie.operators import Set
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
@@ -64,6 +66,26 @@ async def get_image_presigned_upload_url(
     current_user: User = Depends(get_current_user),
 ) -> PresignResponse:
     """Return a pre-signed S3 URL for direct image upload from the client."""
+    # Enforce monthly image input limit — reset counter when the month changes
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    usage = current_user.usage
+    if usage.image_inputs_month != current_month:
+        usage.image_inputs_this_month = 0
+        usage.image_inputs_month = current_month
+        await current_user.update(Set({
+            User.usage: usage,
+        }))
+
+    if usage.image_inputs_this_month >= current_user.limits.max_image_inputs_per_month:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Monthly image input limit reached ({current_user.limits.max_image_inputs_per_month}). Upgrade to Pro for more.",
+        )
+
+    # Increment before issuing the presign URL so the slot is reserved
+    usage.image_inputs_this_month += 1
+    await current_user.update(Set({User.usage: usage}))
+
     ext = _IMAGE_CONTENT_TYPES.get(content_type, "jpg")
     s3_key = f"images/{current_user.id}/{uuid.uuid4()}.{ext}"
     upload_url = _get_s3().generate_presigned_url(

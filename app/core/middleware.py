@@ -24,6 +24,7 @@ _PUBLIC_PREFIXES = (
     "/api/v1/slots/internal/",
     "/api/v1/deliver",
     "/api/v1/admin/internal/",
+    "/api/v1/billing/webhook/",  # RevenueCat webhook — no user token, verified by HMAC
 )
 
 
