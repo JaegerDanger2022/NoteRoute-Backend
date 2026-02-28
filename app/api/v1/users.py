@@ -1,10 +1,11 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
+from app.config import settings
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.core.security import decrypt_token, encrypt_token
 from app.models.source import Source
@@ -55,7 +56,10 @@ async def update_me(
 
 
 @router.delete("/me", status_code=204)
-async def delete_me(current_user: User = Depends(get_current_user)) -> None:
+async def delete_me(
+    current_user: User = Depends(get_current_user),
+    delete_custom_vectors: bool = Query(default=False, description="Also delete vectors from the user's private Pinecone index"),
+) -> None:
     """Permanently delete the current user's account and all associated data."""
     from app.models.integration import Integration
     from app.models.slot import KnowledgeSlot
@@ -65,11 +69,15 @@ async def delete_me(current_user: User = Depends(get_current_user)) -> None:
 
     user_id = current_user.id
 
-    # Delete all Pinecone vectors for this user's slots
+    # Delete Pinecone vectors — shared index always, custom index only if opted in
     slots = await KnowledgeSlot.find(KnowledgeSlot.user_id == user_id).to_list()
     for slot in slots:
         try:
-            await asyncio.to_thread(_vector_svc.delete_slot, str(slot.id))
+            is_custom = slot.index_name and slot.index_name != settings.PINECONE_INDEX_NAME
+            if is_custom and not delete_custom_vectors:
+                continue  # User chose to keep their private index data
+            delete_creds = _vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
+            await asyncio.to_thread(_vector_svc.delete_slot, str(slot.id), delete_creds)
         except Exception:
             pass  # Best-effort — don't block account deletion
 
