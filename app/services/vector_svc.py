@@ -178,6 +178,34 @@ def search_slots(
     return [{"slot_id": sid, "score": score} for sid, score in ranked]
 
 
+def resolve_delete_creds(
+    index_name: str | None,
+    current_custom: CustomIndexCreds | None,
+) -> CustomIndexCreds | None:
+    """Return the CustomIndexCreds needed to delete a vector originally stored in *index_name*.
+
+    Logic:
+    - If the slot was stored in the shared index (or has no recorded index_name), use None (shared).
+    - If the slot was stored in the user's *current* custom index, use current_custom.
+    - If the slot was stored in a *different* custom index (user has rotated or removed their index),
+      we cannot reconstruct the API key — log a warning and fall back to the shared index so the
+      caller doesn't crash.  The stale vector in the old index is a known limitation in this case.
+    """
+    shared_name = settings.PINECONE_INDEX_NAME
+    if not index_name or index_name == shared_name:
+        return None  # shared index
+    if current_custom and index_name == current_custom.index_name:
+        return current_custom  # same custom index still active
+    # index_name is a custom index but we no longer have the key for it
+    logger.warning(
+        "Cannot delete from index '%s' — user's current custom index is '%s'. "
+        "Stale vector may remain in the old index.",
+        index_name,
+        current_custom.index_name if current_custom else "none",
+    )
+    return None  # fall back to shared so the delete call doesn't crash
+
+
 def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None) -> None:
     """Delete the summary vector and all content chunks for a slot."""
     idx = _get_index(custom)

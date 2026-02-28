@@ -567,7 +567,8 @@ async def delete_slot(
         child_id_str = str(child.id)
         await child.delete()
         try:
-            vector_svc.delete_slot(child_id_str, custom_index)
+            child_delete_creds = vector_svc.resolve_delete_creds(child.index_name, custom_index)
+            vector_svc.delete_slot(child_id_str, child_delete_creds)
         except Exception:
             logger.exception("vector delete failed for child slot %s", child_id_str)
 
@@ -579,7 +580,8 @@ async def delete_slot(
     await current_user.save()
 
     try:
-        vector_svc.delete_slot(slot_id_str, custom_index)
+        delete_creds = vector_svc.resolve_delete_creds(slot.index_name, custom_index)
+        vector_svc.delete_slot(slot_id_str, delete_creds)
     except Exception:
         logger.exception("vector delete failed for slot %s", slot_id_str)
 

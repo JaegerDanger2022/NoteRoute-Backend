@@ -172,7 +172,8 @@ async def delete_source(
 
     for slot in slots:
         try:
-            vector_svc.delete_slot(str(slot.id), custom=custom_index)
+            delete_creds = vector_svc.resolve_delete_creds(slot.index_name, custom_index)
+            vector_svc.delete_slot(str(slot.id), delete_creds)
         except Exception:
             logger.warning("Could not delete vector for slot %s", slot.id)
         slot.is_active = False
