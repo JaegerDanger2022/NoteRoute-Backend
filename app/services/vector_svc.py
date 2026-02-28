@@ -139,6 +139,7 @@ def upsert_slot_content_chunks(
 
     Chunk IDs are stored as '{slot_id}#0', '{slot_id}#1', … so the search node
     can strip the suffix to recover the parent slot_id.
+    Content chunks carry has_content=True so the search node can weight them higher.
     """
     idx = _get_index(custom)
     slot_id = str(slot.id)
@@ -146,9 +147,10 @@ def upsert_slot_content_chunks(
         "user_id": str(slot.user_id),
         "source_id": str(slot.source_id),
     }
+    content_meta = {**base_meta, "has_content": True}
     idx.upsert(vectors=[{"id": slot_id, "values": summary_vector, "metadata": base_meta}], namespace=_NS_SUMMARY)
     chunk_upserts = [
-        {"id": f"{slot_id}#{i}", "values": vec, "metadata": base_meta}
+        {"id": f"{slot_id}#{i}", "values": vec, "metadata": content_meta}
         for i, vec in enumerate(chunk_vectors)
     ]
     idx.upsert(vectors=chunk_upserts, namespace=_NS_CONTENT)
