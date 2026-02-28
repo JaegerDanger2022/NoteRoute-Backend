@@ -298,6 +298,21 @@ async def disconnect_integration(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+async def _assert_provider_id_unclaimed(provider: str, provider_user_id: str, current_user_id) -> None:
+    """Raise 409 if another NoteRoute account already owns this provider identity."""
+    from fastapi import HTTPException as _HTTPException
+    clash = await Integration.find_one(
+        Integration.provider == provider,
+        Integration.provider_user_id == provider_user_id,
+        Integration.user_id != current_user_id,
+    )
+    if clash:
+        raise _HTTPException(
+            status_code=409,
+            detail=f"This {provider} account is already connected to another NoteRoute account.",
+        )
+
+
 async def _handle_google_callback(code: str, state: str) -> None:
     """Exchange Google auth code for tokens, store, upsert Source."""
     # Strip platform and upgrade suffixes before using state as a user_id
@@ -354,6 +369,7 @@ async def _handle_google_callback(code: str, state: str) -> None:
         existing.is_active = True
         await existing.save()
     else:
+        await _assert_provider_id_unclaimed("google", provider_user_id, user_id)
         await Integration(
             user_id=user_id,
             provider="google",
@@ -428,6 +444,7 @@ async def _handle_slack_callback(code: str, state: str) -> None:
         existing.is_active = True
         await existing.save()
     else:
+        await _assert_provider_id_unclaimed("slack", workspace_id, user_id)
         await Integration(
             user_id=user_id,
             provider="slack",
@@ -534,6 +551,7 @@ async def _handle_trello_callback(token: str, state: str) -> None:
         existing.is_active = True
         await existing.save()
     else:
+        await _assert_provider_id_unclaimed("trello", provider_user_id, user_id)
         await Integration(
             user_id=user_id,
             provider="trello",
@@ -598,6 +616,7 @@ async def _handle_todoist_callback(code: str, state: str) -> None:
         existing.is_active = True
         await existing.save()
     else:
+        await _assert_provider_id_unclaimed("todoist", provider_user_id, user_id)
         await Integration(
             user_id=user_id,
             provider="todoist",
