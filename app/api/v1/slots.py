@@ -59,6 +59,7 @@ def _slot_to_dict(slot: KnowledgeSlot) -> dict:
         "tags": slot.tags,
         "read_content": slot.read_content,
         "index_status": slot.index_status,
+        "index_name": slot.index_name,
         "is_active": slot.is_active,
         "created_at": slot.created_at.isoformat(),
         "updated_at": slot.updated_at.isoformat(),
@@ -233,6 +234,7 @@ async def _embed_and_enrich_slot(
         else:
             vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
         slot.index_status = "indexed"
+        slot.index_name = custom_index.index_name if custom_index else settings.PINECONE_INDEX_NAME
         await slot.save()
         logger.info("Vector upsert complete for slot %s", slot_id)
     except Exception:

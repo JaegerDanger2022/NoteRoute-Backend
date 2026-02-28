@@ -26,6 +26,7 @@ class KnowledgeSlot(Document):
     include_subpages: bool = True  # Whether to recursively index child pages (Notion only)
     read_content: bool = False
     index_status: Literal["pending", "indexing", "indexed", "failed"] = "pending"
+    index_name: str = "noteroute-shared"  # Which Pinecone index holds this slot's vectors
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
