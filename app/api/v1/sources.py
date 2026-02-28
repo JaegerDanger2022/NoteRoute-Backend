@@ -15,7 +15,6 @@ from app.models.slot import KnowledgeSlot
 from app.models.source import Source
 from app.models.user import User
 from app.services import gdocs_svc, notion_svc, slack_svc, todoist_svc, trello_svc, vector_svc
-from app.services.vector_svc import CustomIndexCreds
 
 logger = logging.getLogger(__name__)
 
@@ -151,15 +150,6 @@ async def delete_source(
     source.updated_at = datetime.now(timezone.utc)
     await source.save()
 
-    # Resolve custom Pinecone creds (if user has BYOI)
-    custom_index: CustomIndexCreds | None = None
-    cfg = current_user.custom_index
-    if cfg and cfg.index_status == "ready":
-        custom_index = CustomIndexCreds(
-            pinecone_api_key=decrypt_token(cfg.pinecone_api_key),
-            index_name=cfg.index_name,
-        )
-
     # Fetch all active slots for this source, delete their vectors, then soft-delete
     slots = await KnowledgeSlot.find(
         KnowledgeSlot.source_id == source_id,
@@ -172,7 +162,9 @@ async def delete_source(
 
     for slot in slots:
         try:
-            delete_creds = vector_svc.resolve_delete_creds(slot.index_name, custom_index)
+            # Each slot stores its own encrypted API key so deletion works
+            # regardless of the user's current custom index configuration.
+            delete_creds = vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
             vector_svc.delete_slot(str(slot.id), delete_creds)
         except Exception:
             logger.warning("Could not delete vector for slot %s", slot.id)

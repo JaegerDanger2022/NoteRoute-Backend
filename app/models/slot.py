@@ -27,6 +27,7 @@ class KnowledgeSlot(Document):
     read_content: bool = False
     index_status: Literal["pending", "indexing", "indexed", "failed"] = "pending"
     index_name: str = ""  # Which Pinecone index holds this slot's vectors (set after upsert)
+    index_api_key: str = ""  # Encrypted Pinecone API key for that index (empty = shared index)
     is_active: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -183,27 +183,35 @@ def search_slots(
 
 def resolve_delete_creds(
     index_name: str | None,
-    current_custom: CustomIndexCreds | None,
+    encrypted_api_key: str | None,
 ) -> CustomIndexCreds | None:
     """Return the CustomIndexCreds needed to delete a vector originally stored in *index_name*.
 
-    Logic:
-    - If the slot's index_name matches the user's current custom index, use those creds.
-    - Otherwise (shared index, empty, or a rotated/deleted custom index) use None (shared).
-      For rotated/deleted custom indexes we can't recover the old key — log a warning so the
-      operator knows a stale vector may remain.
+    Uses the encrypted API key stored on the slot at index time — so deletion works
+    regardless of the user's current custom index configuration.
+
+    Returns None when the slot lives on the shared index (no key needed).
     """
-    if current_custom and index_name == current_custom.index_name:
-        return current_custom  # slot is in the user's active custom index
-    if index_name and index_name != settings.PINECONE_INDEX_NAME:
-        # Recorded a custom index name but it doesn't match the current one — key is gone
+    if not index_name or index_name == settings.PINECONE_INDEX_NAME:
+        return None  # shared index — use default
+    if encrypted_api_key:
+        from app.core.security import decrypt_token
+        try:
+            return CustomIndexCreds(
+                pinecone_api_key=decrypt_token(encrypted_api_key),
+                index_name=index_name,
+            )
+        except Exception:
+            logger.warning(
+                "Could not decrypt stored API key for index '%s' — stale vector may remain.",
+                index_name,
+            )
+    else:
         logger.warning(
-            "Cannot delete from index '%s' — user's current custom index is '%s'. "
-            "Stale vector may remain in the old index.",
+            "No stored API key for index '%s' — stale vector may remain.",
             index_name,
-            current_custom.index_name if current_custom else "none",
         )
-    return None  # shared index (or fallback)
+    return None
 
 
 def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None) -> None:

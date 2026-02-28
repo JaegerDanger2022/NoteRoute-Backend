@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from app.api.deps import get_current_user
 from app.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError, TierLimitError
-from app.core.security import decrypt_token
+from app.core.security import decrypt_token, encrypt_token
 from app.models.integration import Integration
 from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
@@ -235,6 +235,12 @@ async def _embed_and_enrich_slot(
             vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
         slot.index_status = "indexed"
         slot.index_name = custom_index.index_name if custom_index else settings.PINECONE_INDEX_NAME
+        # Persist encrypted API key so we can delete from the correct index later,
+        # even if the user has since disconnected or rotated their custom index.
+        if custom_index:
+            slot.index_api_key = encrypt_token(custom_index.pinecone_api_key)
+        else:
+            slot.index_api_key = ""  # shared index — no key needed
         await slot.save()
         logger.info("Vector upsert complete for slot %s", slot_id)
     except Exception:
@@ -556,7 +562,6 @@ async def delete_slot(
         raise NotFoundError("Slot not found")
 
     slot_id_str = str(slot.id)
-    custom_index, _, _llm = _resolve_custom_creds(current_user)
 
     # Cascade-delete child section slots (Todoist project slots own their sections)
     child_slots = await KnowledgeSlot.find(
@@ -567,7 +572,7 @@ async def delete_slot(
         child_id_str = str(child.id)
         await child.delete()
         try:
-            child_delete_creds = vector_svc.resolve_delete_creds(child.index_name, custom_index)
+            child_delete_creds = vector_svc.resolve_delete_creds(child.index_name, child.index_api_key)
             vector_svc.delete_slot(child_id_str, child_delete_creds)
         except Exception:
             logger.exception("vector delete failed for child slot %s", child_id_str)
@@ -580,7 +585,7 @@ async def delete_slot(
     await current_user.save()
 
     try:
-        delete_creds = vector_svc.resolve_delete_creds(slot.index_name, custom_index)
+        delete_creds = vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
         vector_svc.delete_slot(slot_id_str, delete_creds)
     except Exception:
         logger.exception("vector delete failed for slot %s", slot_id_str)
