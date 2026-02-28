@@ -27,7 +27,7 @@ def init_vector_store() -> None:
     pc = Pinecone(api_key=settings.PINECONE_API_KEY)
     name = settings.PINECONE_INDEX_NAME
 
-    existing = [i["name"] for i in pc.list_indexes()]
+    existing = [i.name for i in pc.list_indexes()]
     if name not in existing:
         pc.create_index(
             name=name,
@@ -60,7 +60,7 @@ def _get_index(custom: CustomIndexCreds | None = None):
 def provision_custom_index(creds: CustomIndexCreds) -> None:
     """Create the user's own Pinecone index if it doesn't exist yet."""
     pc = Pinecone(api_key=creds.pinecone_api_key)
-    existing = [i["name"] for i in pc.list_indexes()]
+    existing = [i.name for i in pc.list_indexes()]
     if creds.index_name not in existing:
         pc.create_index(
             name=creds.index_name,
@@ -77,7 +77,7 @@ def check_custom_index_exists(creds: CustomIndexCreds) -> bool:
     """Return True if the user's index still exists in Pinecone."""
     try:
         pc = Pinecone(api_key=creds.pinecone_api_key)
-        existing = [i["name"] for i in pc.list_indexes()]
+        existing = [i.name for i in pc.list_indexes()]
         return creds.index_name in existing
     except Exception:
         return False
