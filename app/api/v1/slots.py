@@ -7,7 +7,7 @@ from beanie.operators import Set
 from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from pydantic import BaseModel
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_admin
 from app.config import settings
 from app.core.exceptions import BadRequestError, NotFoundError, TierLimitError
 from app.core.security import decrypt_token, encrypt_token
@@ -302,7 +302,7 @@ async def create_slot(
 ) -> dict:
     if not body.read_content and not (body.description or "").strip():
         raise BadRequestError("Description is required when Read & index content is off.")
-    if current_user.usage.slots_count >= current_user.limits.max_slots:
+    if not is_admin(current_user) and current_user.usage.slots_count >= current_user.limits.max_slots:
         raise TierLimitError(
             f"Slot limit reached ({current_user.limits.max_slots}). Upgrade your plan."
         )
@@ -394,7 +394,7 @@ async def bulk_create_slots(
         if not req.read_content and not (req.description or "").strip():
             raise BadRequestError("Description is required when Read & index content is off.")
     available = current_user.limits.max_slots - current_user.usage.slots_count
-    if len(body.slots) > available:
+    if not is_admin(current_user) and len(body.slots) > available:
         raise TierLimitError(
             f"Adding {len(body.slots)} slots would exceed your limit of {current_user.limits.max_slots}."
         )

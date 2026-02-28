@@ -6,7 +6,7 @@ from beanie.operators import Set
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_admin
 from app.config import settings
 from app.models.user import User
 
@@ -76,7 +76,7 @@ async def get_image_presigned_upload_url(
             User.usage: usage,
         }))
 
-    if usage.image_inputs_this_month >= current_user.limits.max_image_inputs_per_month:
+    if not is_admin(current_user) and usage.image_inputs_this_month >= current_user.limits.max_image_inputs_per_month:
         raise HTTPException(
             status_code=429,
             detail=f"Monthly image input limit reached ({current_user.limits.max_image_inputs_per_month}). Upgrade to Pro for more.",

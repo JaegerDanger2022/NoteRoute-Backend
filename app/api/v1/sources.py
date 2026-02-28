@@ -6,7 +6,7 @@ from beanie.operators import Set
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_admin
 from app.config import settings
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.core.security import decrypt_token, encrypt_token
@@ -59,7 +59,7 @@ async def create_source(
     body: SourceCreateRequest,
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    if current_user.usage.sources_count >= current_user.limits.max_sources:
+    if not is_admin(current_user) and current_user.usage.sources_count >= current_user.limits.max_sources:
         raise TierLimitError(
             f"Source limit reached ({current_user.limits.max_sources}). Upgrade your plan."
         )

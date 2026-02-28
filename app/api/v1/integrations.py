@@ -459,6 +459,7 @@ async def _upsert_source(
     Re-connecting an already-active integration never counts against the limit.
     """
     from fastapi import HTTPException as _HTTPException
+    from app.api.deps import is_admin as _is_admin
 
     existing = await Source.find_one(
         Source.user_id == user.id,
@@ -468,7 +469,7 @@ async def _upsert_source(
 
     if existing:
         was_inactive = not existing.is_active
-        if was_inactive and user.usage.sources_count >= user.limits.max_sources:
+        if was_inactive and not _is_admin(user) and user.usage.sources_count >= user.limits.max_sources:
             raise _HTTPException(
                 status_code=429,
                 detail=f"Source limit reached ({user.limits.max_sources}). Upgrade to Pro for more.",
@@ -483,7 +484,7 @@ async def _upsert_source(
             user.usage.sources_count += 1
             await user.save()
     else:
-        if user.usage.sources_count >= user.limits.max_sources:
+        if not _is_admin(user) and user.usage.sources_count >= user.limits.max_sources:
             raise _HTTPException(
                 status_code=429,
                 detail=f"Source limit reached ({user.limits.max_sources}). Upgrade to Pro for more.",

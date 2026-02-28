@@ -1,7 +1,14 @@
 from fastapi import Request
 from pymongo.errors import DuplicateKeyError
 
+from app.config import settings
 from app.models.user import User
+
+
+def is_admin(user: User) -> bool:
+    """Return True if the user's Firebase UID is in the admin allowlist."""
+    allowed = [u.strip() for u in settings.ADMIN_FIREBASE_UIDS.split(",") if u.strip()]
+    return user.firebase_uid in allowed
 
 
 async def get_current_user(request: Request) -> User:
