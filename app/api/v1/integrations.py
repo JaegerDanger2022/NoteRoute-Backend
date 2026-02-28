@@ -453,7 +453,13 @@ async def _upsert_source(
     connected_account_id: str,
     connected_account_email: str | None,
 ) -> None:
-    """Create or reactivate a Source document for the user+provider pair."""
+    """Create or reactivate a Source document for the user+provider pair.
+
+    Raises HTTPException 429 if the user has hit their source limit.
+    Re-connecting an already-active integration never counts against the limit.
+    """
+    from fastapi import HTTPException as _HTTPException
+
     existing = await Source.find_one(
         Source.user_id == user.id,
         Source.provider == provider,
@@ -462,6 +468,11 @@ async def _upsert_source(
 
     if existing:
         was_inactive = not existing.is_active
+        if was_inactive and user.usage.sources_count >= user.limits.max_sources:
+            raise _HTTPException(
+                status_code=429,
+                detail=f"Source limit reached ({user.limits.max_sources}). Upgrade to Pro for more.",
+            )
         existing.name = name
         existing.connected_account_id = connected_account_id
         existing.connected_account_email = connected_account_email
@@ -472,6 +483,11 @@ async def _upsert_source(
             user.usage.sources_count += 1
             await user.save()
     else:
+        if user.usage.sources_count >= user.limits.max_sources:
+            raise _HTTPException(
+                status_code=429,
+                detail=f"Source limit reached ({user.limits.max_sources}). Upgrade to Pro for more.",
+            )
         await Source(
             user_id=user.id,
             provider=provider,

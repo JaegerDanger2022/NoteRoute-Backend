@@ -5,7 +5,7 @@ import logging
 from beanie.operators import Set
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from app.core.auth import get_current_user
+from app.api.deps import get_current_user
 from app.models.user import TierLimits, User
 from app.config import settings
 
