@@ -60,7 +60,10 @@ def _get_index(custom: CustomIndexCreds | None = None):
 def provision_custom_index(creds: CustomIndexCreds) -> None:
     """Create the user's own Pinecone index if it doesn't exist yet."""
     pc = Pinecone(api_key=creds.pinecone_api_key)
-    existing = [i.name for i in pc.list_indexes()]
+    existing_indexes = pc.list_indexes()
+    logger.info("Pinecone list_indexes response type=%s value=%s", type(existing_indexes), existing_indexes)
+    existing = [i.name for i in existing_indexes]
+    logger.info("Existing index names: %s", existing)
     if creds.index_name not in existing:
         pc.create_index(
             name=creds.index_name,

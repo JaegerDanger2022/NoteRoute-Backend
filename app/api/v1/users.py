@@ -73,8 +73,10 @@ def _custom_index_response(cfg: CustomIndexConfig) -> dict:
 
 async def _provision_index_background(user_id: str, index_name: str, encrypted_key: str) -> None:
     """Background: create Pinecone index, then update index_status to ready."""
+    import logging
     from app.models.user import User as UserModel
     from beanie import PydanticObjectId as OId
+    _log = logging.getLogger(__name__)
     user = await UserModel.get(OId(user_id))
     if not user or not user.custom_index:
         return
@@ -86,7 +88,9 @@ async def _provision_index_background(user_id: str, index_name: str, encrypted_k
         await asyncio.to_thread(vector_svc.provision_custom_index, creds)
         user.custom_index.index_status = "ready"
         user.custom_index.provisioned_at = datetime.now(timezone.utc)
+        _log.info("Custom index provisioned: %s", index_name)
     except Exception:
+        _log.exception("Failed to provision custom index '%s' for user %s", index_name, user_id)
         user.custom_index.index_status = "error"
     await user.update(Set({User.custom_index: user.custom_index}))
 
