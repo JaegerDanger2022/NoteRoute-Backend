@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from beanie import PydanticObjectId
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_current_user
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -34,11 +34,21 @@ _TERMINAL_STATUSES = {"delivered", "failed", "rejected"}
 
 
 @router.get("")
-async def list_routes(current_user: User = Depends(get_current_user)) -> list[dict]:
-    routes = await Route.find(
+async def list_routes(
+    current_user: User = Depends(get_current_user),
+    status: str | None = Query(default=None, description="Filter by status: delivered, failed, rejected"),
+    q: str | None = Query(default=None, description="Search transcript text"),
+) -> list[dict]:
+    filters: list = [
         Route.user_id == current_user.id,
         {"status": {"$in": list(_TERMINAL_STATUSES)}},
-    ).sort("-created_at").limit(50).to_list()
+    ]
+    if status and status in _TERMINAL_STATUSES:
+        filters[1] = {"status": status}
+    if q:
+        filters.append({"transcript": {"$regex": q, "$options": "i"}})
+
+    routes = await Route.find(*filters).sort("-created_at").limit(100).to_list()
 
     # Batch-fetch slot names for routes that have a confirmed slot
     slot_ids = [r.confirmed_slot_id for r in routes if r.confirmed_slot_id]
@@ -47,7 +57,17 @@ async def list_routes(current_user: User = Depends(get_current_user)) -> list[di
         slots = await KnowledgeSlot.find({"_id": {"$in": slot_ids}}).to_list()
         slot_map = {str(s.id): s.name for s in slots}
 
-    return [_route_to_dict(r, slot_map.get(str(r.confirmed_slot_id))) for r in routes]
+    results = [_route_to_dict(r, slot_map.get(str(r.confirmed_slot_id))) for r in routes]
+
+    # Client-side slot name filter applied after name resolution
+    if q:
+        q_lower = q.lower()
+        results = [
+            r for r in results
+            if q_lower in (r["transcript"] or "").lower() or q_lower in r["slot_name"].lower()
+        ]
+
+    return results
 
 
 @router.get("/{route_id}")

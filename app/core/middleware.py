@@ -1,6 +1,7 @@
 import uuid
 import logging
 import time
+from collections import defaultdict, deque
 from typing import Callable
 
 from fastapi import Request, Response
@@ -10,6 +11,31 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.services.firebase import verify_id_token
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Rate limiter — sliding window, in-memory
+# ---------------------------------------------------------------------------
+_rate_buckets: dict[str, deque] = defaultdict(deque)
+
+_DEFAULT_LIMIT = (120, 60)  # 120 req / 60 s
+_PROCESS_LIMIT = (20, 60)   # 20 req / 60 s for voice/image processing
+
+_PROCESS_PREFIXES = ("/api/v1/process", "/api/v1/voice")
+
+
+def _check_rate_limit(uid: str, path: str) -> bool:
+    """Return True if allowed, False if rate-limited."""
+    is_process = path.startswith(_PROCESS_PREFIXES)
+    max_req, window = _PROCESS_LIMIT if is_process else _DEFAULT_LIMIT
+    key = f"{uid}:{'p' if is_process else 'g'}"
+    now = time.monotonic()
+    bucket = _rate_buckets[key]
+    while bucket and bucket[0] < now - window:
+        bucket.popleft()
+    if len(bucket) >= max_req:
+        return False
+    bucket.append(now)
+    return True
 
 # Paths that don't require authentication
 _PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
@@ -85,7 +111,18 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
+        uid = claims["uid"]
+        if not _check_rate_limit(uid, request.url.path):
+            response = Response(
+                content='{"error":"Too many requests. Please slow down."}',
+                status_code=429,
+                media_type="application/json",
+                headers={"Retry-After": "60"},
+            )
+            await response(scope, receive, send)
+            return
+
         scope["state"] = scope.get("state", {})
-        scope["state"]["firebase_uid"] = claims["uid"]
+        scope["state"]["firebase_uid"] = uid
         scope["state"]["firebase_email"] = claims.get("email", "")
         await self.app(scope, receive, send)

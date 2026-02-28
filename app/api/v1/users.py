@@ -54,6 +54,33 @@ async def update_me(
     return {"id": str(current_user.id), "display_name": body.display_name or current_user.display_name}
 
 
+@router.delete("/me", status_code=204)
+async def delete_me(current_user: User = Depends(get_current_user)) -> None:
+    """Permanently delete the current user's account and all associated data."""
+    from app.models.integration import Integration
+    from app.models.slot import KnowledgeSlot
+    from app.models.route import Route
+    from app.models.source import Source
+    from app.services import vector_svc as _vector_svc
+
+    user_id = current_user.id
+
+    # Delete all Pinecone vectors for this user's slots
+    slots = await KnowledgeSlot.find(KnowledgeSlot.user_id == user_id).to_list()
+    for slot in slots:
+        try:
+            await asyncio.to_thread(_vector_svc.delete_slot, str(slot.id))
+        except Exception:
+            pass  # Best-effort — don't block account deletion
+
+    # Delete all MongoDB documents
+    await KnowledgeSlot.find(KnowledgeSlot.user_id == user_id).delete()
+    await Source.find(Source.user_id == user_id).delete()
+    await Integration.find(Integration.user_id == user_id).delete()
+    await Route.find(Route.user_id == user_id).delete()
+    await current_user.delete()
+
+
 class CustomIndexRequest(BaseModel):
     pinecone_api_key: str
     bedrock_aws_access_key_id: str | None = None
