@@ -606,7 +606,7 @@ async def _embed_slot(
         tags_str = " ".join(source.tags) if source.tags else ""
         source_context = f"{source.name} {source.provider} {tags_str} | "
 
-    summary_text = source_context + slot.description
+    summary_text = source_context + slot.name + ": " + slot.description
 
     if slot.raw_content:
         # Split raw content into overlapping chunks and embed each independently.
