@@ -59,7 +59,7 @@ def _slot_to_dict(slot: KnowledgeSlot) -> dict:
         "tags": slot.tags,
         "read_content": slot.read_content,
         "index_status": slot.index_status,
-        "index_name": slot.index_name,
+        "index_name": slot.index_name or settings.PINECONE_INDEX_NAME,
         "is_active": slot.is_active,
         "created_at": slot.created_at.isoformat(),
         "updated_at": slot.updated_at.isoformat(),
