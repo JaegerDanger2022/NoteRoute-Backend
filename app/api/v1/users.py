@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.deps import get_current_user
@@ -71,57 +71,39 @@ def _custom_index_response(cfg: CustomIndexConfig) -> dict:
     }
 
 
-async def _provision_index_background(user_id: str, index_name: str, encrypted_key: str) -> None:
-    """Background: create Pinecone index, then update index_status to ready."""
-    import logging
-    from app.models.user import User as UserModel
-    from beanie import PydanticObjectId as OId
-    _log = logging.getLogger(__name__)
-    user = await UserModel.get(OId(user_id))
-    if not user or not user.custom_index:
-        return
-    try:
-        creds = CustomIndexCreds(
-            pinecone_api_key=decrypt_token(encrypted_key),
-            index_name=index_name,
-        )
-        await asyncio.to_thread(vector_svc.provision_custom_index, creds)
-        user.custom_index.index_status = "ready"
-        user.custom_index.provisioned_at = datetime.now(timezone.utc)
-        _log.info("Custom index provisioned: %s", index_name)
-    except Exception:
-        _log.exception("Failed to provision custom index '%s' for user %s", index_name, user_id)
-        user.custom_index.index_status = "error"
-    await user.update(Set({User.custom_index: user.custom_index}))
-
 
 @router.post("/me/custom-index", status_code=201)
 async def connect_custom_index(
     body: CustomIndexRequest,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ) -> dict:
     # TODO: enforce tier guard (pro/team only) once billing is live
+
+    # Validate the API key before saving anything — fail fast with 400.
     user_id_short = str(current_user.id)[-8:]
     index_name = f"noteroute-{user_id_short}"
+    try:
+        await asyncio.to_thread(
+            vector_svc.provision_custom_index,
+            CustomIndexCreds(pinecone_api_key=body.pinecone_api_key, index_name=index_name),
+        )
+    except Exception as exc:
+        msg = str(exc)
+        if "401" in msg or "Unauthorized" in msg or "Invalid API Key" in msg or "unauthorized" in msg.lower():
+            raise HTTPException(status_code=400, detail="Invalid Pinecone API key.")
+        raise HTTPException(status_code=400, detail=f"Could not connect Pinecone index: {msg[:200]}")
 
     encrypted_key = encrypt_token(body.pinecone_api_key)
     cfg = CustomIndexConfig(
         pinecone_api_key=encrypted_key,
         index_name=index_name,
-        index_status="provisioning",
+        index_status="ready",
+        provisioned_at=datetime.now(timezone.utc),
         bedrock_aws_access_key_id=encrypt_token(body.bedrock_aws_access_key_id) if body.bedrock_aws_access_key_id else None,
         bedrock_aws_secret_access_key=encrypt_token(body.bedrock_aws_secret_access_key) if body.bedrock_aws_secret_access_key else None,
         bedrock_aws_region=body.bedrock_aws_region,
     )
     await current_user.update(Set({User.custom_index: cfg}))
-
-    background_tasks.add_task(
-        _provision_index_background,
-        str(current_user.id),
-        index_name,
-        encrypted_key,
-    )
     return _custom_index_response(cfg)
 
 
