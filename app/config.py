@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # Pinecone
     PINECONE_API_KEY: str
-    PINECONE_INDEX_NAME: str = "noteroute-slots"
+    PINECONE_INDEX_NAME: str = "noteroute-shared"
 
     # Encryption (Fernet key for OAuth token storage)
     ENCRYPTION_KEY: str = ""
