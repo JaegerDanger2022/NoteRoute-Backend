@@ -44,6 +44,7 @@ class ConfirmRequest(BaseModel):
     trello_format: str = "note"  # "note" | "checklist"
     trello_checklist_title: str | None = None
     trello_checklist_id: str | None = None
+    notion_parent_page_id: str | None = None
 
 
 class ProcessImageStreamRequest(BaseModel):
@@ -359,6 +360,7 @@ async def confirm_slot(
                 "trello_format": body.trello_format,
                 "trello_checklist_title": body.trello_checklist_title,
                 "trello_checklist_id": body.trello_checklist_id,
+                "notion_parent_page_id": body.notion_parent_page_id,
             },
         )
         resp.raise_for_status()
