@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime, timezone
 
 import httpx
+
+logger = logging.getLogger(__name__)
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends
 from fastapi.responses import RedirectResponse
@@ -10,8 +13,10 @@ from app.config import settings
 from app.core.exceptions import NotFoundError
 from app.core.security import encrypt_token
 from app.models.integration import Integration, OAuthTokens
+from app.models.slot import KnowledgeSlot
 from app.models.source import Source
 from app.models.user import User
+from app.services import notion_svc, vector_svc
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
 
@@ -395,6 +400,71 @@ async def _handle_notion_callback(code: str, state: str) -> None:
         name=workspace_name,
         connected_account_id=bot_id,
         connected_account_email=provider_email,
+    )
+
+    # If this is a re-authorization, prune any slots whose pages are no longer accessible
+    if existing:
+        await _prune_revoked_notion_slots(user, access_token)
+
+
+async def _prune_revoked_notion_slots(user: User, access_token: str) -> None:
+    """Delete slots (+ vectors) for Notion pages no longer authorized by the user.
+
+    Called after a re-authorization so that deselected pages can't be used as a
+    loophole to retain slots beyond the tier limit.
+    """
+    try:
+        authorized_pages = await notion_svc.list_pages(access_token)
+        authorized_ids = {p["id"] for p in authorized_pages}
+    except Exception:
+        logger.warning("Could not fetch Notion pages during prune — skipping")
+        return
+
+    # Find the user's Notion source
+    source = await Source.find_one(
+        Source.user_id == user.id,
+        Source.provider == "notion",
+        Source.is_active == True,
+    )
+    if not source:
+        return
+
+    # Load ALL active slots for this source (primaries + children)
+    all_slots = await KnowledgeSlot.find(
+        KnowledgeSlot.source_id == source.id,
+        KnowledgeSlot.user_id == user.id,
+        KnowledgeSlot.is_active == True,
+    ).to_list()
+
+    # A slot is revoked if its resource_id is no longer in the authorized set.
+    # Normalize IDs: Notion sometimes returns unhyphenated UUIDs.
+    def _norm(page_id: str) -> str:
+        return page_id.replace("-", "")
+
+    authorized_norm = {_norm(pid) for pid in authorized_ids}
+    revoked = [s for s in all_slots if _norm(s.destination.resource_id) not in authorized_norm]
+
+    if not revoked:
+        return
+
+    # Count primary slots being removed (children don't count toward quota)
+    primary_count = sum(1 for s in revoked if s.parent_slot_id is None)
+
+    for slot in revoked:
+        try:
+            delete_creds = vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
+            vector_svc.delete_slot(str(slot.id), delete_creds)
+        except Exception:
+            logger.warning("Could not delete vector for revoked slot %s", slot.id)
+        slot.is_active = False
+        slot.updated_at = datetime.now(timezone.utc)
+        await slot.save()
+
+    user.usage.slots_count = max(0, user.usage.slots_count - primary_count)
+    await user.save()
+    logger.info(
+        "Pruned %d revoked Notion slot(s) for user %s (%d primary)",
+        len(revoked), user.id, primary_count,
     )
 
 
