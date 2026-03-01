@@ -46,6 +46,7 @@ async def connect_integration(
     provider: str,
     current_user: User = Depends(get_current_user),
     platform: str = "mobile",
+    reauthorize: bool = False,
 ) -> dict:
     """Initiate connection to a provider.
 
@@ -56,6 +57,8 @@ async def connect_integration(
 
     Pass ?platform=web from the Next.js frontend so the OAuth callback
     redirects to the web app instead of the mobile deep link.
+    Pass ?reauthorize=true to re-show the Notion page picker for an existing
+    connection (lets users authorize additional pages without disconnecting).
     """
     # Append |web to state so the callback knows which platform to redirect to
     state = str(current_user.id)
@@ -71,6 +74,8 @@ async def connect_integration(
             f"&redirect_uri={settings.NOTION_REDIRECT_URI}"
             f"&state={state}"
         )
+        if reauthorize:
+            url += "&reauthorize=true"
         return {"status": "redirect", "provider": "notion", "url": url}
 
     elif provider == "google":
