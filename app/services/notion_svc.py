@@ -111,15 +111,16 @@ async def list_child_pages(page_id: str, access_token: str) -> list[dict]:
 
 
 async def create_page(
-    parent_page_id: str,
+    parent_page_id: str | None,
     title: str,
     content: str,
     access_token: str,
 ) -> dict:
-    """Create a new child page under parent_page_id with title and text content."""
+    """Create a Notion page. If parent_page_id is None, creates at workspace root."""
     client = AsyncClient(auth=access_token)
+    parent = {"workspace": True} if not parent_page_id else {"page_id": parent_page_id}
     page = await client.pages.create(
-        parent={"page_id": parent_page_id},
+        parent=parent,
         properties={
             "title": {"title": [{"text": {"content": title}}]}
         },

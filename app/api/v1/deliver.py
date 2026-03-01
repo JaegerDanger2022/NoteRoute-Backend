@@ -265,13 +265,8 @@ async def _save_as_new_slot(
 
     # Create the resource in the provider
     if source.provider == "notion":
-        parent_id = notion_parent_page_id
-        if not parent_id:
-            pages = await notion_svc.list_pages(access_token)
-            if not pages:
-                raise ValueError("No Notion pages available to create child page under")
-            parent_id = pages[0]["id"]
-        resource = await notion_svc.create_page(parent_id, title, content, access_token)
+        # No parent selected → create at workspace root
+        resource = await notion_svc.create_page(notion_parent_page_id or None, title, content, access_token)
     elif source.provider == "google":
         resource = await gdocs_svc.create_document(title, content, access_token, refresh_token=g_refresh)
     elif source.provider == "slack":
