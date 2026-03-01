@@ -521,9 +521,15 @@ async def _upsert_source(
     )
     now = datetime.now(timezone.utc)
 
+    # Use a live DB count rather than the cached counter to avoid drift
+    active_sources_count = await Source.find(
+        Source.user_id == user.id,
+        Source.is_active == True,  # noqa: E712
+    ).count()
+
     if existing:
         was_inactive = not existing.is_active
-        if was_inactive and not _is_admin(user) and user.usage.sources_count >= user.limits.max_sources:
+        if was_inactive and not _is_admin(user) and active_sources_count >= user.limits.max_sources:
             raise _HTTPException(
                 status_code=429,
                 detail=f"Source limit reached ({user.limits.max_sources}). Upgrade to Pro for more.",
@@ -535,10 +541,10 @@ async def _upsert_source(
         existing.updated_at = now
         await existing.save()
         if was_inactive:
-            user.usage.sources_count += 1
+            user.usage.sources_count = active_sources_count + 1
             await user.save()
     else:
-        if not _is_admin(user) and user.usage.sources_count >= user.limits.max_sources:
+        if not _is_admin(user) and active_sources_count >= user.limits.max_sources:
             raise _HTTPException(
                 status_code=429,
                 detail=f"Source limit reached ({user.limits.max_sources}). Upgrade to Pro for more.",
@@ -550,7 +556,7 @@ async def _upsert_source(
             connected_account_id=connected_account_id,
             connected_account_email=connected_account_email,
         ).insert()
-        user.usage.sources_count += 1
+        user.usage.sources_count = active_sources_count + 1
         await user.save()
 
 

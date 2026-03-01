@@ -59,7 +59,13 @@ async def create_source(
     body: SourceCreateRequest,
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    if not is_admin(current_user) and current_user.usage.sources_count >= current_user.limits.max_sources:
+    # Use live DB count to avoid cached-counter drift
+    active_sources_count = await Source.find(
+        Source.user_id == current_user.id,
+        Source.is_active == True,  # noqa: E712
+    ).count()
+
+    if not is_admin(current_user) and active_sources_count >= current_user.limits.max_sources:
         raise TierLimitError(
             f"Source limit reached ({current_user.limits.max_sources}). Upgrade your plan."
         )
@@ -90,7 +96,7 @@ async def create_source(
         existing.updated_at = now
         await existing.save()
         if was_inactive:
-            current_user.usage.sources_count += 1
+            current_user.usage.sources_count = active_sources_count + 1
             await current_user.save()
         return _source_to_dict(existing)
 
@@ -104,7 +110,7 @@ async def create_source(
     )
     await source.insert()
 
-    current_user.usage.sources_count += 1
+    current_user.usage.sources_count = active_sources_count + 1
     await current_user.save()
 
     return _source_to_dict(source)
