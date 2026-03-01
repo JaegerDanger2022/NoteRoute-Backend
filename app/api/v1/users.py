@@ -78,7 +78,7 @@ async def delete_me(
             if is_custom and not delete_custom_vectors:
                 continue  # User chose to keep their private index data
             delete_creds = _vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
-            await asyncio.to_thread(_vector_svc.delete_slot, str(slot.id), delete_creds)
+            await asyncio.to_thread(_vector_svc.delete_slot, str(slot.id), delete_creds, slot.chunk_count)
         except Exception:
             pass  # Best-effort — don't block account deletion
 

@@ -171,7 +171,7 @@ async def delete_source(
             # Each slot stores its own encrypted API key so deletion works
             # regardless of the user's current custom index configuration.
             delete_creds = vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
-            vector_svc.delete_slot(str(slot.id), delete_creds)
+            vector_svc.delete_slot(str(slot.id), delete_creds, chunk_count=slot.chunk_count)
         except Exception:
             logger.warning("Could not delete vector for slot %s", slot.id)
         slot.is_active = False

@@ -232,8 +232,10 @@ async def _embed_and_enrich_slot(
         summary_vec, content_vecs = await _embed_slot(slot, source, custom_bedrock)
         if len(content_vecs) > 1:
             vector_svc.upsert_slot_content_chunks(slot, summary_vec, content_vecs, custom_index)
+            slot.chunk_count = len(content_vecs)
         else:
             vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
+            slot.chunk_count = 0
         slot.index_status = "indexed"
         slot.index_name = custom_index.index_name if custom_index else settings.PINECONE_INDEX_NAME
         # Persist encrypted API key so we can delete from the correct index later,
@@ -501,8 +503,10 @@ async def update_slot(
         summary_vec, content_vecs = await _embed_slot(slot, source, custom_bedrock)
         if len(content_vecs) > 1:
             vector_svc.upsert_slot_content_chunks(slot, summary_vec, content_vecs, custom_index)
+            slot.chunk_count = len(content_vecs)
         else:
             vector_svc.upsert_slot(slot, summary_vec, content_vecs[0], custom_index)
+            slot.chunk_count = 0
         slot.index_status = "indexed"
         await slot.save()
     except Exception:
@@ -578,7 +582,7 @@ async def delete_slot(
         await child.delete()
         try:
             child_delete_creds = vector_svc.resolve_delete_creds(child.index_name, child.index_api_key)
-            vector_svc.delete_slot(child_id_str, child_delete_creds)
+            vector_svc.delete_slot(child_id_str, child_delete_creds, chunk_count=child.chunk_count)
         except Exception:
             logger.exception("vector delete failed for child slot %s", child_id_str)
 
@@ -591,7 +595,7 @@ async def delete_slot(
 
     try:
         delete_creds = vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
-        vector_svc.delete_slot(slot_id_str, delete_creds)
+        vector_svc.delete_slot(slot_id_str, delete_creds, chunk_count=slot.chunk_count)
     except Exception:
         logger.exception("vector delete failed for slot %s", slot_id_str)
 

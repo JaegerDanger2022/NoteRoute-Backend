@@ -453,7 +453,7 @@ async def _prune_revoked_notion_slots(user: User, access_token: str) -> None:
     for slot in revoked:
         try:
             delete_creds = vector_svc.resolve_delete_creds(slot.index_name, slot.index_api_key)
-            vector_svc.delete_slot(str(slot.id), delete_creds)
+            vector_svc.delete_slot(str(slot.id), delete_creds, chunk_count=slot.chunk_count)
         except Exception:
             logger.warning("Could not delete vector for revoked slot %s", slot.id)
         slot.is_active = False

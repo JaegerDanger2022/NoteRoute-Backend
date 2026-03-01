@@ -226,23 +226,36 @@ def resolve_delete_creds(
     return None
 
 
-def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None) -> None:
-    """Delete the summary vector and all content chunks for a slot."""
+def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None, chunk_count: int = 0) -> None:
+    """Delete the summary vector and all content chunks for a slot.
+
+    chunk_count should be the value stored on KnowledgeSlot.chunk_count (set at index time).
+    When > 0 we reconstruct the chunk IDs deterministically (slot_id#0 … slot_id#N-1),
+    avoiding list_paginated which only works on serverless indexes.
+    For legacy slots where chunk_count == 0 we fall back to list_paginated with a
+    broad except so a failure there never blocks the rest of the deletion.
+    """
     idx = _get_index(custom)
     # Summary namespace: always a single vector with the bare slot_id
     idx.delete(ids=[slot_id], namespace=_NS_SUMMARY)
     logger.info("Deleted vector %s from namespace %s", slot_id, _NS_SUMMARY)
-    # Content namespace: may be a single vector (slot_id) or chunks (slot_id#0, slot_id#1, …).
-    # Delete the bare id first, then sweep chunks by prefix via list_paginated.
+    # Content namespace: delete the single-vector form first (covers non-chunked slots)
     idx.delete(ids=[slot_id], namespace=_NS_CONTENT)
-    try:
-        chunk_ids: list[str] = []
-        for page in idx.list_paginated(prefix=f"{slot_id}#", namespace=_NS_CONTENT):
-            for v in (page.vectors or []):
-                # list_paginated returns VectorMetadata objects with an .id attr, not plain strings
-                chunk_ids.append(v.id if hasattr(v, "id") else v)
-        if chunk_ids:
-            idx.delete(ids=chunk_ids, namespace=_NS_CONTENT)
-            logger.info("Deleted %d content chunks for slot %s", len(chunk_ids), slot_id)
-    except Exception:
-        logger.warning("Chunk cleanup via list_paginated failed for slot %s — chunks may remain", slot_id)
+
+    if chunk_count > 0:
+        # Deterministic: reconstruct exactly the IDs that were stored
+        chunk_ids = [f"{slot_id}#{i}" for i in range(chunk_count)]
+        idx.delete(ids=chunk_ids, namespace=_NS_CONTENT)
+        logger.info("Deleted %d content chunks for slot %s", chunk_count, slot_id)
+    else:
+        # Legacy fallback: list_paginated only works on serverless indexes
+        try:
+            chunk_ids = []
+            for page in idx.list_paginated(prefix=f"{slot_id}#", namespace=_NS_CONTENT):
+                for v in (page.vectors or []):
+                    chunk_ids.append(v.id if hasattr(v, "id") else v)
+            if chunk_ids:
+                idx.delete(ids=chunk_ids, namespace=_NS_CONTENT)
+                logger.info("Deleted %d legacy content chunks for slot %s", len(chunk_ids), slot_id)
+        except Exception:
+            logger.warning("list_paginated unsupported or failed for slot %s — chunks may remain", slot_id)
