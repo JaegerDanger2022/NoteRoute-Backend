@@ -132,6 +132,8 @@ async def process_stream(
         except Exception as e:
             logger.error("Pipeline stream failed: %s", e)
             yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+        finally:
+            yield f"data: {json.dumps({'node': 'done'})}\n\n"
 
     return StreamingResponse(
         _stream(),
@@ -233,6 +235,8 @@ async def process_image_stream(
         except Exception as e:
             logger.error("Image pipeline stream failed: %s", e)
             yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+        finally:
+            yield f"data: {json.dumps({'node': 'done'})}\n\n"
 
     return StreamingResponse(
         _stream(),

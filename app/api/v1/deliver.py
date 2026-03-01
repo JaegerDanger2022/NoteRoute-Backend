@@ -161,11 +161,12 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         raise NotFoundError(f"No active {source.provider} integration")
 
     access_token = await _get_access_token(integration)
+    g_refresh = decrypt_token(integration.tokens.refresh_token) if integration.provider == "google" and integration.tokens.refresh_token else ""
 
     if source.provider == "notion":
         await notion_svc.append_block(slot.destination.resource_id, content, access_token)
     elif source.provider == "google":
-        await gdocs_svc.append_content(slot.destination.resource_id, content, access_token, tab_id=target_tab_id)
+        await gdocs_svc.append_content(slot.destination.resource_id, content, access_token, tab_id=target_tab_id, refresh_token=g_refresh)
     elif source.provider == "slack":
         await slack_svc.post_message(slot.destination.resource_id, content, access_token)
     elif source.provider == "todoist":
@@ -254,6 +255,7 @@ async def _save_as_new_slot(
         raise NotFoundError(f"No active {source.provider} integration")
 
     access_token = await _get_access_token(integration)
+    g_refresh = decrypt_token(integration.tokens.refresh_token) if integration.provider == "google" and integration.tokens.refresh_token else ""
 
     # User-provided title takes priority; fall back to summary/content
     if doc_title and doc_title.strip():
@@ -271,7 +273,7 @@ async def _save_as_new_slot(
             parent_id = pages[0]["id"]
         resource = await notion_svc.create_page(parent_id, title, content, access_token)
     elif source.provider == "google":
-        resource = await gdocs_svc.create_document(title, content, access_token)
+        resource = await gdocs_svc.create_document(title, content, access_token, refresh_token=g_refresh)
     elif source.provider == "slack":
         # For Slack, post to the first available channel and use that as the slot
         channels = await slack_svc.list_channels(access_token)

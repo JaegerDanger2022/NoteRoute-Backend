@@ -172,18 +172,30 @@ async def refresh_access_token(refresh_token: str) -> tuple[str, datetime]:
     return data["access_token"], expires_at
 
 
-def _build_drive(access_token: str):
-    creds = Credentials(token=access_token)
+def _build_drive(access_token: str, refresh_token: str = ""):
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token or None,
+        token_uri=_GOOGLE_TOKEN_URL,
+        client_id=settings.GOOGLE_CLIENT_ID or None,
+        client_secret=settings.GOOGLE_CLIENT_SECRET or None,
+    )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
-def _build_docs(access_token: str):
-    creds = Credentials(token=access_token)
+def _build_docs(access_token: str, refresh_token: str = ""):
+    creds = Credentials(
+        token=access_token,
+        refresh_token=refresh_token or None,
+        token_uri=_GOOGLE_TOKEN_URL,
+        client_id=settings.GOOGLE_CLIENT_ID or None,
+        client_secret=settings.GOOGLE_CLIENT_SECRET or None,
+    )
     return build("docs", "v1", credentials=creds, cache_discovery=False)
 
 
-def _list_documents_sync(access_token: str) -> list[dict]:
-    service = _build_drive(access_token)
+def _list_documents_sync(access_token: str, refresh_token: str = "") -> list[dict]:
+    service = _build_drive(access_token, refresh_token)
     results = []
     page_token = None
 
@@ -211,9 +223,9 @@ def _list_documents_sync(access_token: str) -> list[dict]:
     return results
 
 
-def _create_document_sync(title: str, content: str, access_token: str) -> dict:
-    docs_service = _build_docs(access_token)
-    drive_service = _build_drive(access_token)
+def _create_document_sync(title: str, content: str, access_token: str, refresh_token: str = "") -> dict:
+    docs_service = _build_docs(access_token, refresh_token)
+    drive_service = _build_drive(access_token, refresh_token)
 
     # Create blank document
     doc = docs_service.documents().create(body={"title": title}).execute()
@@ -239,9 +251,9 @@ def _create_document_sync(title: str, content: str, access_token: str) -> dict:
     }
 
 
-def _list_tabs_sync(document_id: str, access_token: str) -> list[dict]:
+def _list_tabs_sync(document_id: str, access_token: str, refresh_token: str = "") -> list[dict]:
     """Return a flat list of {tab_id, tab_title} for all tabs in a Google Doc."""
-    docs_service = _build_docs(access_token)
+    docs_service = _build_docs(access_token, refresh_token)
     doc = docs_service.documents().get(documentId=document_id, includeTabsContent=True).execute()
 
     result: list[dict] = []
@@ -268,8 +280,8 @@ def _list_tabs_sync(document_id: str, access_token: str) -> list[dict]:
     return result
 
 
-def _append_content_sync(document_id: str, content: str, access_token: str, tab_id: str | None = None) -> None:
-    docs_service = _build_docs(access_token)
+def _append_content_sync(document_id: str, content: str, access_token: str, tab_id: str | None = None, refresh_token: str = "") -> None:
+    docs_service = _build_docs(access_token, refresh_token)
 
     if tab_id:
         doc = docs_service.documents().get(documentId=document_id, includeTabsContent=True).execute()
@@ -315,9 +327,9 @@ def _extract_body_text(body_content: list, parts: list, max_chars: int) -> bool:
     return False
 
 
-def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: int = 100000) -> str:
+def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: int = 100000, refresh_token: str = "") -> str:
     """Extract plain text from a Google Doc (all tabs if present), capped at max_chars."""
-    docs_service = _build_docs(access_token)
+    docs_service = _build_docs(access_token, refresh_token)
     doc = docs_service.documents().get(documentId=document_id, includeTabsContent=True).execute()
     parts: list[str] = []
 
@@ -342,12 +354,12 @@ def _fetch_document_text_sync(document_id: str, access_token: str, max_chars: in
     return "".join(parts)[:max_chars].strip()
 
 
-async def fetch_document_text(document_id: str, access_token: str, max_chars: int = 100000) -> str:
-    return await asyncio.to_thread(_fetch_document_text_sync, document_id, access_token, max_chars)
+async def fetch_document_text(document_id: str, access_token: str, max_chars: int = 100000, refresh_token: str = "") -> str:
+    return await asyncio.to_thread(_fetch_document_text_sync, document_id, access_token, max_chars, refresh_token)
 
 
-async def list_documents(access_token: str) -> list[dict]:
-    return await asyncio.to_thread(_list_documents_sync, access_token)
+async def list_documents(access_token: str, refresh_token: str = "") -> list[dict]:
+    return await asyncio.to_thread(_list_documents_sync, access_token, refresh_token)
 
 
 async def get_document_metadata(document_id: str, access_token: str) -> dict:
@@ -365,13 +377,13 @@ async def get_document_metadata(document_id: str, access_token: str) -> dict:
         return {"id": data["id"], "name": data.get("name", "Google Doc")}
 
 
-async def create_document(title: str, content: str, access_token: str) -> dict:
-    return await asyncio.to_thread(_create_document_sync, title, content, access_token)
+async def create_document(title: str, content: str, access_token: str, refresh_token: str = "") -> dict:
+    return await asyncio.to_thread(_create_document_sync, title, content, access_token, refresh_token)
 
 
-async def list_tabs(document_id: str, access_token: str) -> list[dict]:
-    return await asyncio.to_thread(_list_tabs_sync, document_id, access_token)
+async def list_tabs(document_id: str, access_token: str, refresh_token: str = "") -> list[dict]:
+    return await asyncio.to_thread(_list_tabs_sync, document_id, access_token, refresh_token)
 
 
-async def append_content(document_id: str, content: str, access_token: str, tab_id: str | None = None) -> None:
-    await asyncio.to_thread(_append_content_sync, document_id, content, access_token, tab_id)
+async def append_content(document_id: str, content: str, access_token: str, tab_id: str | None = None, refresh_token: str = "") -> None:
+    await asyncio.to_thread(_append_content_sync, document_id, content, access_token, tab_id, refresh_token)

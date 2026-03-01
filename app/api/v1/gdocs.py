@@ -52,6 +52,14 @@ async def get_document_tabs(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Return the list of tabs for a Google Doc. Used by the frontend tab picker."""
+    integration = await Integration.find_one(
+        Integration.user_id == current_user.id,
+        Integration.provider == "google",
+        Integration.is_active == True,
+    )
+    if not integration:
+        raise NotFoundError("No active Google integration")
     access_token = await _get_google_access_token(current_user)
-    tabs = await gdocs_svc.list_tabs(document_id, access_token)
+    g_refresh = decrypt_token(integration.tokens.refresh_token) if integration.tokens.refresh_token else ""
+    tabs = await gdocs_svc.list_tabs(document_id, access_token, refresh_token=g_refresh)
     return {"tabs": tabs}

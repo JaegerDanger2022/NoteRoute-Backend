@@ -232,11 +232,12 @@ async def list_resources(
         access_token = await _get_fresh_google_token(integration)
     else:
         access_token = decrypt_token(integration.tokens.access_token)
+    g_refresh = decrypt_token(integration.tokens.refresh_token) if integration.provider == "google" and integration.tokens.refresh_token else ""
 
     if source.provider == "notion":
         return await notion_svc.list_all_pages(access_token)
     elif source.provider == "google":
-        return await gdocs_svc.list_documents(access_token)
+        return await gdocs_svc.list_documents(access_token, refresh_token=g_refresh)
     elif source.provider == "slack":
         return await slack_svc.list_channels(access_token)
     elif source.provider == "todoist":

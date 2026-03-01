@@ -128,11 +128,12 @@ async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: s
     if not integration:
         return ""
     access_token = decrypt_token(integration.tokens.access_token)
+    g_refresh = decrypt_token(integration.tokens.refresh_token) if provider == "google" and integration.tokens.refresh_token else ""
     resource_id = slot.destination.resource_id
     if provider == "notion":
         return await notion_svc.fetch_page_text(resource_id, access_token, include_subpages=slot.include_subpages)
     elif provider == "google":
-        return await gdocs_svc.fetch_document_text(resource_id, access_token)
+        return await gdocs_svc.fetch_document_text(resource_id, access_token, refresh_token=g_refresh)
     elif provider == "slack":
         return await slack_svc.fetch_channel_messages(resource_id, access_token)
     elif provider == "todoist":
