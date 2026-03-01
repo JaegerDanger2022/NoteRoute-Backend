@@ -235,17 +235,33 @@ async def oauth_callback(provider: str, code: str, state: str) -> RedirectRespon
       "{user_id}__upgrade"     → mobile write-scope upgrade
       "{user_id}|web__upgrade" → web write-scope upgrade
     """
+    from fastapi import HTTPException as _HTTPException
+    from urllib.parse import quote as _quote
+
     is_upgrade = state.endswith("__upgrade") or "|web__upgrade" in state
     is_web = "|web" in state
 
-    if provider == "google":
-        await _handle_google_callback(code, state)
-    elif provider == "slack":
-        await _handle_slack_callback(code, state)
-    elif provider == "todoist":
-        await _handle_todoist_callback(code, state)
-    else:
-        raise NotFoundError(f"Unknown provider: {provider}")
+    try:
+        if provider == "google":
+            await _handle_google_callback(code, state)
+        elif provider == "slack":
+            await _handle_slack_callback(code, state)
+        elif provider == "todoist":
+            await _handle_todoist_callback(code, state)
+        else:
+            raise NotFoundError(f"Unknown provider: {provider}")
+    except _HTTPException as exc:
+        # Redirect with error instead of returning raw JSON to the browser
+        error_msg = _quote(str(exc.detail), safe="")
+        if is_web:
+            return RedirectResponse(
+                url=f"{settings.WEB_APP_URL}/oauth/callback?provider={provider}&status=error&message={error_msg}",
+                status_code=302,
+            )
+        return RedirectResponse(
+            url=f"noteroute://oauth/error?provider={provider}&message={error_msg}",
+            status_code=302,
+        )
 
     if is_web:
         # Redirect to the Next.js OAuth callback page
@@ -297,6 +313,7 @@ async def disconnect_integration(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 async def _assert_provider_id_unclaimed(provider: str, provider_user_id: str, current_user_id) -> None:
     """Raise 409 if another NoteRoute account already owns this provider identity."""
