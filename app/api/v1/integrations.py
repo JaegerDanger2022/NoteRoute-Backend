@@ -20,13 +20,14 @@ _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _SLACK_AUTH_URL = "https://slack.com/oauth/v2/authorize"
 _SLACK_TOKEN_URL = "https://slack.com/api/oauth.v2.access"
 
-# Phase 1: read-only — shown at connect time (no scary permissions)
+# Single scope: drive.file grants read+write to files the user explicitly selects
+# via Google Picker and to files created by this app.
 _GOOGLE_CONNECT_SCOPES = (
-    "https://www.googleapis.com/auth/drive.readonly "
+    "https://www.googleapis.com/auth/drive.file "
     "https://www.googleapis.com/auth/userinfo.email"
 )
-# Phase 2: write — requested only when user first delivers a note
-_GOOGLE_WRITE_SCOPE = "https://www.googleapis.com/auth/documents"
+# Write scope is now included in the connect scopes (drive.file covers read+write).
+_GOOGLE_WRITE_SCOPE = "https://www.googleapis.com/auth/drive.file"
 
 _SLACK_SCOPES = "channels:read,chat:write"
 
@@ -203,7 +204,7 @@ async def upgrade_google_write(
 async def google_has_write(
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Check whether the user has granted the documents (write) scope."""
+    """Check whether the user has granted the drive.file (write) scope."""
     integration = await Integration.find_one(
         Integration.user_id == current_user.id,
         Integration.provider == "google",
@@ -213,6 +214,25 @@ async def google_has_write(
         return {"has_write": False}
     has_write = _GOOGLE_WRITE_SCOPE in integration.tokens.scopes
     return {"has_write": has_write}
+
+
+@router.get("/google/access-token")
+async def google_access_token(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return a fresh Google access token for use with the Google Picker API."""
+    from app.api.v1.sources import _get_fresh_google_token
+
+    integration = await Integration.find_one(
+        Integration.user_id == current_user.id,
+        Integration.provider == "google",
+        Integration.is_active == True,
+    )
+    if not integration:
+        raise NotFoundError("Google integration not found")
+
+    access_token = await _get_fresh_google_token(integration)
+    return {"access_token": access_token}
 
 
 @router.get("/trello/token", response_model=None)
