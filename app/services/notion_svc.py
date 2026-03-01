@@ -116,11 +116,15 @@ async def create_page(
     content: str,
     access_token: str,
 ) -> dict:
-    """Create a Notion page. If parent_page_id is None, creates at workspace root."""
+    """Create a Notion page under parent_page_id. If None, falls back to the first accessible page."""
+    if not parent_page_id:
+        pages = await list_pages(access_token)
+        if not pages:
+            raise ValueError("No Notion pages available. Share at least one page with the NoteRoute integration.")
+        parent_page_id = pages[0]["id"]
     client = AsyncClient(auth=access_token)
-    parent = {"workspace": True} if not parent_page_id else {"page_id": parent_page_id}
     page = await client.pages.create(
-        parent=parent,
+        parent={"page_id": parent_page_id},
         properties={
             "title": {"title": [{"text": {"content": title}}]}
         },

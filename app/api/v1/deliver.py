@@ -265,7 +265,6 @@ async def _save_as_new_slot(
 
     # Create the resource in the provider
     if source.provider == "notion":
-        # No parent selected → create at workspace root
         resource = await notion_svc.create_page(notion_parent_page_id or None, title, content, access_token)
     elif source.provider == "google":
         resource = await gdocs_svc.create_document(title, content, access_token, refresh_token=g_refresh)
