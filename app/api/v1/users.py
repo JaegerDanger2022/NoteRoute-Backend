@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, is_admin
 from app.config import settings
 from app.core.exceptions import NotFoundError, TierLimitError
 from app.core.security import decrypt_token, encrypt_token
@@ -34,6 +34,7 @@ async def get_me(current_user: User = Depends(get_current_user)) -> dict:
         "display_name": current_user.display_name,
         "tier": current_user.tier,
         "active_source_id": str(current_user.active_source_id) if current_user.active_source_id else None,
+        "is_admin": is_admin(current_user),
         "limits": {
             "max_sources": current_user.limits.max_sources,
             "max_slots": current_user.limits.max_slots,
