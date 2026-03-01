@@ -279,3 +279,36 @@ async def list_resource_children(
         return await trello_svc.list_lists(resource_id, settings.TRELLO_API_KEY, access_token)
 
     return []
+
+
+@router.get("/{source_id}/resources/{resource_id}")
+async def get_resource(
+    source_id: PydanticObjectId,
+    resource_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Return metadata (id, name) for a single resource by ID. Currently supports Google only."""
+    source = await Source.find_one(
+        Source.id == source_id,
+        Source.user_id == current_user.id,
+        Source.is_active == True,
+    )
+    if not source:
+        raise NotFoundError("Source not found")
+
+    if source.provider != "google":
+        raise NotFoundError("Single-resource lookup is only supported for Google")
+
+    integration = await Integration.find_one(
+        Integration.user_id == current_user.id,
+        Integration.provider == "google",
+        Integration.is_active == True,
+    )
+    if not integration:
+        raise NotFoundError("No active Google integration found")
+
+    access_token = await _get_fresh_google_token(integration)
+    try:
+        return await gdocs_svc.get_document_metadata(resource_id, access_token)
+    except ValueError as e:
+        raise NotFoundError(str(e))

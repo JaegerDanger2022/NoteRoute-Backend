@@ -350,6 +350,21 @@ async def list_documents(access_token: str) -> list[dict]:
     return await asyncio.to_thread(_list_documents_sync, access_token)
 
 
+async def get_document_metadata(document_id: str, access_token: str) -> dict:
+    """Return {"id": ..., "name": ...} for a single Google Doc/Sheet/Slide by ID."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"https://www.googleapis.com/drive/v3/files/{document_id}",
+            params={"fields": "id,name"},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if r.status_code == 404:
+            raise ValueError("Document not found or not accessible")
+        r.raise_for_status()
+        data = r.json()
+        return {"id": data["id"], "name": data.get("name", "Google Doc")}
+
+
 async def create_document(title: str, content: str, access_token: str) -> dict:
     return await asyncio.to_thread(_create_document_sync, title, content, access_token)
 
