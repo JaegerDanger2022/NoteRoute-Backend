@@ -35,6 +35,9 @@ _TODOIST_AUTH_URL = "https://todoist.com/oauth/authorize"
 _TODOIST_TOKEN_URL = "https://todoist.com/oauth/access_token"
 _TODOIST_SCOPES = "data:read_write"
 
+_NOTION_AUTH_URL = "https://api.notion.com/v1/oauth/authorize"
+_NOTION_TOKEN_URL = "https://api.notion.com/v1/oauth/token"
+
 _TRELLO_AUTH_URL = "https://trello.com/1/authorize"
 
 
@@ -60,48 +63,15 @@ async def connect_integration(
         state += "|web"
 
     if provider == "notion":
-        # Internal integration — no OAuth flow. Verify the shared token and store it.
-        if not settings.NOTION_INTEGRATION_TOKEN:
-            raise ValueError("NOTION_INTEGRATION_TOKEN is not configured")
-        async with httpx.AsyncClient() as client:
-            me_resp = await client.get(
-                "https://api.notion.com/v1/users/me",
-                headers={
-                    "Authorization": f"Bearer {settings.NOTION_INTEGRATION_TOKEN}",
-                    "Notion-Version": "2022-06-28",
-                },
-            )
-            me_resp.raise_for_status()
-            me = me_resp.json()
-        bot_id = me.get("id", "unknown")
-        workspace_name = "Notion"
-        provider_email = me.get("person", {}).get("email")
-        encrypted = encrypt_token(settings.NOTION_INTEGRATION_TOKEN)
-        existing = await Integration.find_one(
-            Integration.user_id == current_user.id,
-            Integration.provider == "notion",
+        url = (
+            f"{_NOTION_AUTH_URL}"
+            f"?client_id={settings.NOTION_CLIENT_ID}"
+            f"&response_type=code"
+            f"&owner=user"
+            f"&redirect_uri={settings.NOTION_REDIRECT_URI}"
+            f"&state={state}"
         )
-        if existing:
-            existing.tokens.access_token = encrypted
-            existing.provider_email = provider_email
-            existing.is_active = True
-            await existing.save()
-        else:
-            await Integration(
-                user_id=current_user.id,
-                provider="notion",
-                tokens=OAuthTokens(access_token=encrypted),
-                provider_user_id=bot_id,
-                provider_email=provider_email,
-            ).insert()
-        await _upsert_source(
-            user=current_user,
-            provider="notion",
-            name=workspace_name,
-            connected_account_id=bot_id,
-            connected_account_email=provider_email,
-        )
-        return {"status": "connected", "provider": "notion"}
+        return {"status": "redirect", "provider": "notion", "url": url}
 
     elif provider == "google":
         url = (
@@ -262,7 +232,9 @@ async def oauth_callback(provider: str, code: str, state: str) -> RedirectRespon
     is_web = "|web" in state
 
     try:
-        if provider == "google":
+        if provider == "notion":
+            await _handle_notion_callback(code, state)
+        elif provider == "google":
             await _handle_google_callback(code, state)
         elif provider == "slack":
             await _handle_slack_callback(code, state)
@@ -348,6 +320,77 @@ async def _assert_provider_id_unclaimed(provider: str, provider_user_id: str, cu
             status_code=409,
             detail=f"This {provider} account is already connected to another NoteRoute account.",
         )
+
+
+async def _handle_notion_callback(code: str, state: str) -> None:
+    """Exchange Notion auth code for access token, store, upsert Source."""
+    import base64 as _base64
+
+    raw_user_id = state.split("|")[0]
+    credentials = _base64.b64encode(
+        f"{settings.NOTION_CLIENT_ID}:{settings.NOTION_CLIENT_SECRET}".encode()
+    ).decode()
+
+    async with httpx.AsyncClient() as client:
+        token_resp = await client.post(
+            _NOTION_TOKEN_URL,
+            headers={
+                "Authorization": f"Basic {credentials}",
+                "Content-Type": "application/json",
+                "Notion-Version": "2022-06-28",
+            },
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": settings.NOTION_REDIRECT_URI,
+            },
+        )
+        token_resp.raise_for_status()
+        data = token_resp.json()
+
+    access_token = data["access_token"]
+    workspace_name = data.get("workspace_name") or "Notion"
+    workspace_id = data.get("workspace_id", "unknown")
+    bot_id = data.get("bot_id", workspace_id)
+    owner = data.get("owner", {})
+    person = owner.get("person") or owner.get("user", {}).get("person", {})
+    provider_email = person.get("email") if person else None
+
+    user_id = PydanticObjectId(raw_user_id)
+    user = await User.get(user_id)
+    if not user:
+        return
+
+    encrypted = encrypt_token(access_token)
+    existing = await Integration.find_one(
+        Integration.user_id == user_id,
+        Integration.provider == "notion",
+    )
+
+    if existing:
+        existing.tokens.access_token = encrypted
+        existing.workspace_name = workspace_name
+        existing.provider_email = provider_email
+        existing.is_active = True
+        await existing.save()
+    else:
+        await _assert_provider_id_unclaimed("notion", bot_id, user_id)
+        await Integration(
+            user_id=user_id,
+            provider="notion",
+            tokens=OAuthTokens(access_token=encrypted),
+            provider_user_id=bot_id,
+            provider_email=provider_email,
+            workspace_name=workspace_name,
+        ).insert()
+
+    await _upsert_source(
+        user=user,
+        provider="notion",
+        name=workspace_name,
+        connected_account_id=bot_id,
+        connected_account_email=provider_email,
+    )
 
 
 async def _handle_google_callback(code: str, state: str) -> None:
