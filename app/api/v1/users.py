@@ -88,6 +88,14 @@ async def delete_me(
     await Route.find(Route.user_id == user_id).delete()
     await current_user.delete()
 
+    # Delete the Firebase Auth user record so the email can be re-used
+    # and the account is fully gone (not just signed out)
+    try:
+        from firebase_admin import auth as firebase_auth
+        await asyncio.to_thread(firebase_auth.delete_user, current_user.firebase_uid)
+    except Exception:
+        pass  # Best-effort — MongoDB data is already gone
+
 
 class CustomIndexRequest(BaseModel):
     pinecone_api_key: str
