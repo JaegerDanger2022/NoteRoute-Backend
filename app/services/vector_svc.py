@@ -238,7 +238,9 @@ def delete_slot(slot_id: str, custom: CustomIndexCreds | None = None) -> None:
     try:
         chunk_ids: list[str] = []
         for page in idx.list_paginated(prefix=f"{slot_id}#", namespace=_NS_CONTENT):
-            chunk_ids.extend(page.vectors if page.vectors else [])
+            for v in (page.vectors or []):
+                # list_paginated returns VectorMetadata objects with an .id attr, not plain strings
+                chunk_ids.append(v.id if hasattr(v, "id") else v)
         if chunk_ids:
             idx.delete(ids=chunk_ids, namespace=_NS_CONTENT)
             logger.info("Deleted %d content chunks for slot %s", len(chunk_ids), slot_id)
