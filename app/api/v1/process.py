@@ -260,7 +260,7 @@ async def create_doc(
 
     # If audio provided, transcribe it via LangGraph's /transcribe endpoint
     content = body.content.strip()
-    transcript_from_audio: str | None = None
+    extracted_transcript: str | None = None
     if body.audio_s3_key:
         async with httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
@@ -272,8 +272,8 @@ async def create_doc(
             if lg.get("error"):
                 from app.core.exceptions import BadRequestError
                 raise BadRequestError(f"Transcription failed: {lg['error']}")
-            transcript_from_audio = lg.get("transcript", "")
-        content = transcript_from_audio or content
+            extracted_transcript = lg.get("transcript", "")
+        content = extracted_transcript or content
 
     elif body.image_s3_key:
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -286,7 +286,8 @@ async def create_doc(
             if lg.get("error"):
                 from app.core.exceptions import BadRequestError
                 raise BadRequestError(f"Image extraction failed: {lg['error']}")
-            content = lg.get("transcript", "") or content
+            extracted_transcript = lg.get("transcript", "") or None
+        content = extracted_transcript or content
 
     if not content:
         from app.core.exceptions import BadRequestError
@@ -321,7 +322,7 @@ async def create_doc(
         return {
             "route_id": str(route.id),
             "delivery_status": "delivered",
-            "transcript": content if transcript_from_audio else None,
+            "transcript": extracted_transcript,
             **result,
         }
     except Exception:
