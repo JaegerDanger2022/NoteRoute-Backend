@@ -322,7 +322,7 @@ async def _save_as_new_slot(
     user.usage.slots_count += 1
     await user.save()
 
-    # Embed and upsert to S3 Vectors
+    # Embed and upsert to Pinecone
     try:
         tags_str = " ".join(source.tags) if source.tags else ""
         source_context = f"{source.name} {source.provider} {tags_str} | "
@@ -332,6 +332,7 @@ async def _save_as_new_slot(
         )
         vector_svc.upsert_slot(slot, summary_vec, content_vec)
         slot.index_status = "indexed"
+        slot.index_name = settings.PINECONE_INDEX_NAME
         await slot.save()
     except Exception:
         logger.exception("Vector upsert failed for new slot %s", slot.id)

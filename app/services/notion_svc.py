@@ -110,33 +110,40 @@ async def list_child_pages(page_id: str, access_token: str) -> list[dict]:
     return results
 
 
+_RICH_TEXT_LIMIT = 2000  # Notion API hard limit per rich_text element
+
+
+def _split_content_blocks(content: str) -> list[dict]:
+    """Split content into paragraph blocks, each within Notion's 2000-char rich_text limit."""
+    blocks = []
+    for i in range(0, max(len(content), 1), _RICH_TEXT_LIMIT):
+        chunk = content[i:i + _RICH_TEXT_LIMIT]
+        blocks.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"text": {"content": chunk}}]},
+        })
+    return blocks
+
+
 async def create_page(
     parent_page_id: str | None,
     title: str,
     content: str,
     access_token: str,
 ) -> dict:
-    """Create a Notion page under parent_page_id. If None, falls back to the first accessible page."""
-    if not parent_page_id:
-        pages = await list_pages(access_token)
-        if not pages:
-            raise ValueError("No Notion pages available. Share at least one page with the NoteRoute integration.")
-        parent_page_id = pages[0]["id"]
+    """Create a Notion page under parent_page_id, or at workspace root if None."""
     client = AsyncClient(auth=access_token)
+    if parent_page_id:
+        parent = {"page_id": parent_page_id}
+    else:
+        parent = {"type": "workspace", "workspace": True}
     page = await client.pages.create(
-        parent={"page_id": parent_page_id},
+        parent=parent,
         properties={
             "title": {"title": [{"text": {"content": title}}]}
         },
-        children=[
-            {
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{"text": {"content": content}}]
-                },
-            }
-        ],
+        children=_split_content_blocks(content),
     )
     return {
         "id": page["id"],
@@ -146,9 +153,18 @@ async def create_page(
 
 
 async def append_block(page_id: str, content: str, access_token: str) -> None:
-    """Append a callout block with timestamp to an existing Notion page."""
+    """Append a callout block with timestamp to an existing Notion page.
+
+    Splits content into multiple rich_text elements to stay within Notion's
+    2000-char per element limit.
+    """
     timestamp = datetime.now(timezone.utc).strftime("%b %d, %Y %H:%M UTC")
     client = AsyncClient(auth=access_token)
+    full_text = f"{timestamp}\n{content}"
+    rich_text = [
+        {"text": {"content": full_text[i:i + _RICH_TEXT_LIMIT]}}
+        for i in range(0, max(len(full_text), 1), _RICH_TEXT_LIMIT)
+    ]
     await client.blocks.children.append(
         block_id=page_id,
         children=[
@@ -156,9 +172,7 @@ async def append_block(page_id: str, content: str, access_token: str) -> None:
                 "object": "block",
                 "type": "callout",
                 "callout": {
-                    "rich_text": [
-                        {"text": {"content": f"{timestamp}\n{content}"}}
-                    ],
+                    "rich_text": rich_text,
                     "icon": {"emoji": "📝"},
                     "color": "default",
                 },
