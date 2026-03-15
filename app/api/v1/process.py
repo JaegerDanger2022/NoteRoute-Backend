@@ -58,6 +58,7 @@ class CreateDocRequest(BaseModel):
     audio_s3_key: str = ""  # if provided, transcribe first and use as content
     image_s3_key: str = ""  # if provided, extract image text first and use as content
     extraction_mode: str = "vision"  # "ocr" | "vision"
+    source_id: str = ""  # optional: override user's active_source_id (prevents multi-device race)
 
 
 @router.post("")
@@ -256,7 +257,14 @@ async def create_doc(
 ) -> dict:
     """Skip the pipeline entirely — create a new doc in the active source and index it.
     Accepts either typed content or an audio_s3_key (which gets transcribed first)."""
-    if not current_user.active_source_id:
+    # Prefer explicitly-passed source_id (prevents multi-device race conditions)
+    if body.source_id:
+        from beanie import PydanticObjectId as _ObjId
+        effective_source_id = _ObjId(body.source_id)
+    else:
+        effective_source_id = current_user.active_source_id
+
+    if not effective_source_id:
         raise NotFoundError("No active source selected. Select a source before creating a doc.")
 
     # If audio provided, transcribe it via LangGraph's /transcribe endpoint
@@ -312,6 +320,7 @@ async def create_doc(
             "",  # no summary — title is enough
             route,
             body.doc_title or None,
+            override_source_id=effective_source_id,
         )
         now = datetime.now(timezone.utc)
         route.status = "delivered"

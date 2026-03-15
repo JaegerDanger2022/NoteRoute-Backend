@@ -237,12 +237,14 @@ async def _save_as_new_slot(
     route: Route,
     doc_title: str | None = None,
     notion_parent_page_id: str | None = None,
+    override_source_id=None,
 ) -> dict:
     """Create a new resource in the provider + save it as a KnowledgeSlot."""
-    if not user.active_source_id:
+    source_id = override_source_id or user.active_source_id
+    if not source_id:
         raise ValueError("No active source set on user")
 
-    source = await Source.get(user.active_source_id)
+    source = await Source.get(source_id)
     if not source:
         raise NotFoundError("Active source not found")
 
