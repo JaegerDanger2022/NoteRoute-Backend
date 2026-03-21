@@ -1,6 +1,7 @@
+import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from app.config import settings
@@ -120,3 +121,40 @@ async def admin_users(
             for i, u in enumerate(users)
         ],
     }
+
+
+# ── Re-index all slots ─────────────────────────────────────────────────────────
+
+async def _reindex_all_slots():
+    """Background task: re-embed and upsert all active slots using current GlobalConfig (Titan or Nova)."""
+    from app.api.v1.slots import _embed_slot
+    from app.services import vector_svc
+
+    slots = await KnowledgeSlot.find(KnowledgeSlot.is_active == True).to_list()
+    logger.info("Re-index started: %d active slots", len(slots))
+    ok = failed = 0
+    for slot in slots:
+        try:
+            source = await Source.get(slot.source_id)
+            summary_vec, content_vecs = await _embed_slot(slot, source)
+            if len(content_vecs) > 1:
+                vector_svc.upsert_slot_content_chunks(slot, summary_vec, content_vecs)
+            else:
+                vector_svc.upsert_slot(slot, summary_vec, content_vecs[0])
+            slot.index_status = "indexed"
+            await slot.save()
+            ok += 1
+        except Exception:
+            logger.exception("Re-index failed for slot %s", slot.id)
+            failed += 1
+    logger.info("Re-index complete: %d ok, %d failed", ok, failed)
+
+
+@router.post("/reindex-slots")
+async def reindex_slots(
+    background_tasks: BackgroundTasks,
+    _: str = Depends(_require_admin),
+) -> dict:
+    """Trigger a background re-index of all active slots using the current embedding model."""
+    background_tasks.add_task(_reindex_all_slots)
+    return {"status": "started"}
