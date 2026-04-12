@@ -414,7 +414,9 @@ async def rerank_for_source(
         resp.raise_for_status()
         lg_result = resp.json()
 
-    return {"ranked_slots": lg_result.get("ranked_slots", [])}
+    ranked = lg_result.get("ranked_slots", [])
+    logger.info("rerank: LangGraph returned %d ranked slots", len(ranked))
+    return {"ranked_slots": ranked}
 
 
 @router.post("/confirm")
