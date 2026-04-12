@@ -343,6 +343,57 @@ async def create_doc(
         raise
 
 
+class RerankRequest(BaseModel):
+    run_id: str
+    source_id: str
+
+
+@router.post("/rerank")
+async def rerank_for_source(
+    body: RerankRequest,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Re-rank slots for a different source while the pipeline is paused at confirmation.
+    Also switches the user's active source so delivery goes to the right place.
+    """
+    from beanie import PydanticObjectId
+    from app.models.source import Source
+
+    route = await Route.find_one(
+        Route.run_id == body.run_id,
+        Route.user_id == current_user.id,
+    )
+    if not route:
+        raise NotFoundError("Route not found")
+
+    source = await Source.find_one(
+        Source.id == PydanticObjectId(body.source_id),
+        Source.user_id == current_user.id,
+        Source.is_active == True,
+    )
+    if not source:
+        raise NotFoundError("Source not found")
+
+    # Switch active source so delivery targets the newly selected source
+    current_user.active_source_id = source.id
+    await current_user.save()
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(
+            f"{settings.langgraph_url}/rerank",
+            json={
+                "user_id": str(current_user.id),
+                "source_id": body.source_id,
+                "transcript": route.transcript or "",
+                "summary": route.summary or "",
+            },
+        )
+        resp.raise_for_status()
+        lg_result = resp.json()
+
+    return {"ranked_slots": lg_result.get("ranked_slots", [])}
+
+
 @router.post("/confirm")
 async def confirm_slot(
     body: ConfirmRequest,
