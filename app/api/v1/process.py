@@ -378,14 +378,37 @@ async def rerank_for_source(
     current_user.active_source_id = source.id
     await current_user.save()
 
+    # Fetch transcript + summary from LangGraph checkpoint (the graph is paused
+    # at confirm_node, so full state is available there). Fall back to Route fields
+    # if the checkpoint fetch fails (e.g. already resumed/expired).
+    transcript = route.transcript or ""
+    summary = route.summary or ""
+    logger.info("rerank: route.transcript=%r route.summary=%r", bool(transcript), bool(summary))
+    if not transcript:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            try:
+                resp = await client.get(
+                    f"{settings.langgraph_url}/state/{body.run_id}",
+                )
+                logger.info("rerank: state fetch status=%s", resp.status_code)
+                if resp.status_code == 200:
+                    state = resp.json()
+                    transcript = state.get("transcript") or ""
+                    summary = state.get("summary_text") or ""
+                    logger.info("rerank: got transcript=%d chars summary=%d chars", len(transcript), len(summary))
+            except Exception as e:
+                logger.warning("Could not fetch LangGraph state for rerank: %s", e)
+
+    logger.info("rerank: final transcript=%d chars summary=%d chars source_id=%s", len(transcript), len(summary), body.source_id)
+
     async with httpx.AsyncClient(timeout=60.0) as client:
         resp = await client.post(
             f"{settings.langgraph_url}/rerank",
             json={
                 "user_id": str(current_user.id),
                 "source_id": body.source_id,
-                "transcript": route.transcript or "",
-                "summary": route.summary or "",
+                "transcript": transcript,
+                "summary": summary,
             },
         )
         resp.raise_for_status()
