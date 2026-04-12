@@ -16,6 +16,7 @@ from app.models.slot import KnowledgeSlot, SlotDestination
 from app.models.source import Source
 from app.models.user import User
 from app.services import claude_svc, gdocs_svc, notion_svc, slack_svc, todoist_svc, trello_svc, vector_svc
+from app.services.claude_svc import generate_routing_summary
 from app.services.claude_svc import CustomLLMCreds
 from app.services.vector_svc import CustomIndexCreds
 from app.utils.embeddings import CustomBedrockCreds, embed_text
@@ -116,6 +117,39 @@ async def batch_slot_metadata(ids: str = Query(..., description="Comma-separated
             "resource_id": slot.destination.resource_id,
         })
     return result
+
+
+@router.get("/internal/routing-summaries")
+async def routing_summaries_for_source(
+    user_id: str = Query(...),
+    source_id: str = Query(...),
+) -> list[dict]:
+    """Internal endpoint (no auth) — returns all active slots with their routing summaries
+    for a given user+source. Used by LangGraph rank_node to do LLM-based routing without
+    relying on Pinecone vector similarity.
+    """
+    try:
+        uid = PydanticObjectId(user_id)
+        sid = PydanticObjectId(source_id)
+    except Exception:
+        return []
+
+    slots = await KnowledgeSlot.find(
+        KnowledgeSlot.user_id == uid,
+        KnowledgeSlot.source_id == sid,
+        KnowledgeSlot.is_active == True,
+        KnowledgeSlot.parent_slot_id == None,  # top-level slots only
+    ).to_list()
+
+    return [
+        {
+            "slot_id": str(slot.id),
+            "slot_name": slot.name,
+            "routing_summary": slot.routing_summary or slot.description or slot.name,
+            "tags": slot.tags,
+        }
+        for slot in slots
+    ]
 
 
 async def _fetch_resource_content(slot: KnowledgeSlot, provider: str, user_id: str) -> str:
@@ -226,7 +260,26 @@ async def _embed_and_enrich_slot(
         except Exception:
             logger.exception("Auto-enrich failed for slot %s", slot_id)
 
-    # Step 3: embed and upsert to Pinecone, then mark indexed
+    # Step 3: generate routing summary (purpose + named entities, ≤1500 chars)
+    # Runs after enrich so it uses the finalised description and tags.
+    try:
+        source = await Source.get(slot.source_id)
+        provider_name = source.provider if source else "unknown"
+        routing_summary = await generate_routing_summary(
+            slot_name=slot.name,
+            description=slot.description,
+            content_sample=slot.content_sample,
+            tags=slot.tags,
+            provider=provider_name,
+            custom=custom_llm,
+        )
+        slot.routing_summary = routing_summary
+        await slot.save()
+        logger.info("Routing summary generated for slot %s (%d chars)", slot_id, len(routing_summary))
+    except Exception:
+        logger.exception("Routing summary generation failed for slot %s", slot_id)
+
+    # Step 4: embed and upsert to Pinecone, then mark indexed
     try:
         source = await Source.get(slot.source_id)
         summary_vec, content_vecs = await _embed_slot(slot, source, custom_bedrock)

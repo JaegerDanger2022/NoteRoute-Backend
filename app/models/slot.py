@@ -18,8 +18,9 @@ class KnowledgeSlot(Document):
     parent_slot_id: PydanticObjectId | None = None  # set on section slots owned by a project slot
     name: str
     description: str
-    content_sample: str = ""   # Claude-generated summary of resource content (displayed in UI)
-    raw_content: str = ""      # Raw fetched text used for content_vector embedding
+    content_sample: str = ""      # Claude-generated summary of resource content (displayed in UI)
+    raw_content: str = ""         # Raw fetched text used for content_vector embedding
+    routing_summary: str = ""     # LLM-generated routing context: purpose + key entities (≤1500 chars)
     destination: SlotDestination
     tags: list[str] = []
     notion_parent_page_id: str | None = None  # Parent page for Notion save-as-new-slot

@@ -244,3 +244,101 @@ async def summarize_slot_content(
     return await asyncio.to_thread(
         _summarize_slot_content_sync, slot_name, raw_content, custom, config.use_nova
     )
+
+
+_ROUTING_SUMMARY_MAX_CHARS = 1500
+
+
+def _generate_routing_summary_sync(
+    slot_name: str,
+    description: str,
+    content_sample: str,
+    tags: list[str],
+    provider: str,
+    custom: Optional[CustomLLMCreds] = None,
+    use_nova: bool = False,
+) -> str:
+    """Generate a routing-focused summary that captures purpose + named entities.
+
+    Used at routing time so the LLM can make context-aware decisions rather than
+    relying on semantic similarity alone. Capped at 1500 characters so 50 slots
+    fit comfortably in a single LLM context window (~75 000 chars to spare).
+    """
+    context_parts = [f'Name: "{slot_name}"', f'Provider: {provider}']
+    if tags:
+        context_parts.append(f'Tags: {", ".join(tags)}')
+    if description and description.strip() and description.strip() != slot_name.strip():
+        context_parts.append(f'Description: {description}')
+    if content_sample and content_sample.strip():
+        context_parts.append(f'Content sample: {content_sample[:2000]}')
+    context = "\n".join(context_parts)
+
+    prompt = f"""You are building a routing index for a knowledge management system.
+
+Slot context:
+{context}
+
+Write a concise routing summary for this slot. Cover:
+1. What kind of notes or information belong here (purpose and scope)
+2. Named entities: people, organisations, places, project names, or product names that are associated with this slot — extract from the name, description, and content sample
+3. Topics, themes, or recurring subjects
+
+Rules:
+- Plain text only, no markdown or bullet points
+- Maximum 1500 characters — be concise but information-dense
+- If no named entities can be inferred, omit that section rather than guessing
+- Do not repeat the slot name verbatim as the first sentence"""
+
+    if custom:
+        if custom.provider == "openai":
+            text = _call_openai_sync(prompt, custom.api_key, "gpt-4o-mini", 400)
+        else:
+            text = _call_anthropic_sync(prompt, custom.api_key, "claude-haiku-4-5-20251001", 400)
+    else:
+        client = _get_client()
+        if use_nova:
+            body = json.dumps({
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {"maxTokens": 400},
+            })
+            response = client.invoke_model(
+                modelId=_NOVA_LITE_MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=body,
+            )
+            result = json.loads(response["body"].read())
+            text = result["output"]["message"]["content"][0]["text"].strip()
+        else:
+            body = json.dumps({
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 400,
+                "messages": [{"role": "user", "content": prompt}],
+            })
+            response = client.invoke_model(
+                modelId=_HAIKU_MODEL_ID,
+                contentType="application/json",
+                accept="application/json",
+                body=body,
+            )
+            result = json.loads(response["body"].read())
+            text = result["content"][0]["text"].strip()
+
+    return text[:_ROUTING_SUMMARY_MAX_CHARS]
+
+
+async def generate_routing_summary(
+    slot_name: str,
+    description: str,
+    content_sample: str,
+    tags: list[str],
+    provider: str,
+    custom: Optional[CustomLLMCreds] = None,
+) -> str:
+    """Async wrapper — returns a routing summary capped at 1500 chars."""
+    from app.models.global_config import GlobalConfig
+    config = await GlobalConfig.get_config()
+    return await asyncio.to_thread(
+        _generate_routing_summary_sync,
+        slot_name, description, content_sample, tags, provider, custom, config.use_nova,
+    )
