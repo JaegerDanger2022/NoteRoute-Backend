@@ -77,10 +77,17 @@ async def initialize_transaction(
     if not plan_code:
         raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
 
-    # Do NOT send amount/currency when using a plan code —
-    # Paystack derives those from the plan definition itself.
+    # Amounts in GHS pesewas (integer, no decimals). Must match Paystack plan amounts exactly.
+    amounts_pesewas = {
+        "monthly":    13200,    # GHS 132.00
+        "quarterly":  34650,    # GHS 346.50
+        "biannually": 79118,    # GHS 791.18
+        "annually":   118958,   # GHS 1,189.58
+    }
+
     payload = {
         "email": current_user.email,
+        "amount": amounts_pesewas[body.interval],
         "plan": plan_code,
         "metadata": {
             "firebase_uid": current_user.firebase_uid,
