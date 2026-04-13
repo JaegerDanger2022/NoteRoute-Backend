@@ -77,17 +77,18 @@ async def initialize_transaction(
     if not plan_code:
         raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
 
-    amounts = {
-        "monthly":    799,
-        "quarterly":  2099,
-        "biannually": 3899,
-        "annually":   7199,
+    # Amounts in GHS pesewas (GHS × 100). Matches Paystack plan amounts.
+    amounts_pesewas = {
+        "monthly":    13200,    # GHS 132.00
+        "quarterly":  34650,    # GHS 346.50
+        "biannually": 79118,    # GHS 791.18
+        "annually":   118958,   # GHS 1,189.58
     }
 
     payload = {
         "email": current_user.email,
-        "amount": amounts[body.interval] * 100,  # Paystack expects amount in cents
-        "currency": "USD",
+        "amount": amounts_pesewas[body.interval],
+        "currency": "GHS",
         "plan": plan_code,
         "metadata": {
             "firebase_uid": current_user.firebase_uid,
@@ -104,8 +105,8 @@ async def initialize_transaction(
         )
 
     if resp.status_code != 200:
-        logger.error("Paystack initialize failed: %s", resp.text)
-        raise HTTPException(status_code=502, detail="Could not initialize payment")
+        logger.error("Paystack initialize failed: status=%s body=%s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail=f"Paystack error: {resp.json().get('message', resp.text)}")
 
     data = resp.json().get("data", {})
     return {
