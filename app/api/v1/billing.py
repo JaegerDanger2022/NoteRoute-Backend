@@ -91,7 +91,7 @@ async def initialize_transaction(
         "plan": plan_code,
         "metadata": {
             "firebase_uid": current_user.firebase_uid,
-            "cancel_action": settings.WEB_APP_URL,
+            "cancel_action": f"{settings.WEB_APP_URL}/record",
         },
     }
 
@@ -150,24 +150,62 @@ async def paystack_webhook(
         logger.warning("Paystack webhook: no user found for email=%s", email)
         return {"received": True}
 
-    # Subscription activated or renewed
-    if event in (
-        "subscription.create",
-        "charge.success",
-        "invoice.payment_succeeded",
-        "subscription.not_renew",  # un-cancel
-    ):
+    # Subscription activated — save the subscription code for future cancellation
+    if event == "subscription.create":
+        subscription_code = data.get("subscription_code")
+        if subscription_code:
+            await user.update(Set({User.paystack_subscription_code: subscription_code}))
         await _set_tier(user, "pro")
 
-    # Subscription cancelled, payment failed, or disabled
-    elif event in (
-        "subscription.disable",
-        "invoice.payment_failed",
-        "subscription.expiry_date_update",
-    ):
+    # Renewed or un-cancelled
+    elif event in ("charge.success", "invoice.payment_succeeded", "subscription.not_renew"):
+        await _set_tier(user, "pro")
+
+    # Cancelled, payment failed, or expired
+    elif event in ("subscription.disable", "invoice.payment_failed", "subscription.expiry_date_update"):
+        await user.update(Set({User.paystack_subscription_code: None}))
         await _set_tier(user, "free")
 
     return {"received": True}
+
+
+# ── Cancel subscription ───────────────────────────────────────────────────────
+
+@router.post("/paystack/cancel")
+async def cancel_subscription(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Disable the user's active Paystack subscription."""
+    if current_user.tier != "pro":
+        raise HTTPException(status_code=400, detail="No active subscription to cancel")
+
+    if not current_user.paystack_subscription_code:
+        raise HTTPException(status_code=400, detail="Subscription code not found — please contact support")
+
+    if not settings.PAYSTACK_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Paystack not configured")
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYSTACK_API}/subscription/disable",
+            json={
+                "code": current_user.paystack_subscription_code,
+                "token": "",  # Paystack requires token field — empty string is accepted
+            },
+            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        logger.error("Paystack cancel failed: status=%s body=%s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail=f"Paystack error: {resp.json().get('message', resp.text)}")
+
+    # Downgrade immediately — webhook will also fire as confirmation
+    await current_user.update(Set({User.paystack_subscription_code: None}))
+    await _set_tier(current_user, "free")
+
+    logger.info("User %s cancelled subscription", current_user.id)
+    return {"cancelled": True}
 
 
 # ── Billing status ────────────────────────────────────────────────────────────

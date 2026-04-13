@@ -44,7 +44,7 @@ class User(Document):
     tier: Literal["free", "pro"] = "free"
     limits: TierLimits = Field(default_factory=TierLimits)
     usage: UsageCounters = Field(default_factory=UsageCounters)
-    revenuecat_id: str | None = None  # RevenueCat app user ID (set on first webhook)
+    paystack_subscription_code: str | None = None  # set on subscription.create webhook
     active_source_id: PydanticObjectId | None = None
     custom_index: CustomIndexConfig | None = None
     custom_llm: Optional[CustomLLMConfig] = None
