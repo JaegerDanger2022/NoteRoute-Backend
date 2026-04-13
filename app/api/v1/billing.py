@@ -2,8 +2,10 @@ import hashlib
 import hmac
 import logging
 
+import httpx
 from beanie.operators import Set
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from pydantic import BaseModel
 
 from app.api.deps import get_current_user
 from app.models.user import TierLimits, User
@@ -13,32 +15,34 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
+PAYSTACK_API = "https://api.paystack.co"
+
+# Plan codes from Paystack dashboard (Products → Plans)
+PAYSTACK_PLAN_CODES: dict[str, str] = {
+    "monthly":    "PLN_auj4ymqec30fwtk",
+    "quarterly":  "PLN_bt3tq1kcgw8uf2y",
+    "biannually": "PLN_ya121jv48qvlwmt",
+    "annually":   "PLN_nvc217h1xd7hrpv",
+}
+
 # Tier limit definitions
 _TIER_LIMITS: dict[str, TierLimits] = {
     "free": TierLimits(max_sources=1, max_slots=20, max_image_inputs_per_month=3),
     "pro": TierLimits(max_sources=20, max_slots=500, max_image_inputs_per_month=500),
 }
 
-# Map RevenueCat product identifiers → internal tier
-# Set these to match your RevenueCat product IDs exactly.
-_PRODUCT_TIER: dict[str, str] = {
-    "noteroute_pro_monthly": "pro",
-    "noteroute_pro_annual": "pro",
-}
 
-
-def _verify_signature(body: bytes, auth_header: str) -> bool:
-    """Verify RevenueCat webhook HMAC-SHA256 signature."""
-    if not settings.REVENUECAT_WEBHOOK_SECRET:
-        # Secret not configured — skip verification (dev only)
-        logger.warning("REVENUECAT_WEBHOOK_SECRET not set — skipping signature verification")
+def _verify_paystack_signature(body: bytes, signature: str) -> bool:
+    """Verify Paystack webhook HMAC-SHA512 signature."""
+    if not settings.PAYSTACK_SECRET_KEY:
+        logger.warning("PAYSTACK_SECRET_KEY not set — skipping signature verification")
         return True
     expected = hmac.new(
-        settings.REVENUECAT_WEBHOOK_SECRET.encode(),
+        settings.PAYSTACK_SECRET_KEY.encode(),
         body,
-        hashlib.sha256,
+        hashlib.sha512,
     ).hexdigest()
-    return hmac.compare_digest(expected, auth_header)
+    return hmac.compare_digest(expected, signature)
 
 
 async def _set_tier(user: User, tier: str) -> None:
@@ -47,57 +51,126 @@ async def _set_tier(user: User, tier: str) -> None:
         User.tier: tier,
         User.limits: limits,
     }))
-    logger.info("Updated user %s to tier=%s limits=%s", user.id, tier, limits)
+    logger.info("Updated user %s to tier=%s", user.id, tier)
 
 
-@router.post("/webhook/revenuecat")
-async def revenuecat_webhook(
-    request: Request,
-    authorization: str = Header(default=""),
+# ── Initialize transaction ────────────────────────────────────────────────────
+
+class InitializeRequest(BaseModel):
+    interval: str = "monthly"  # monthly | quarterly | biannually | annually
+
+
+@router.post("/paystack/initialize")
+async def initialize_transaction(
+    body: InitializeRequest,
+    current_user: User = Depends(get_current_user),
 ) -> dict:
     """
-    Receives RevenueCat server-to-server events and updates user tier.
+    Ask Paystack to create a subscription transaction for the current user.
+    Returns { authorization_url, access_code, reference } — the frontend
+    uses authorization_url to redirect or open the Paystack popup.
+    """
+    if not settings.PAYSTACK_SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Paystack not configured")
 
-    Configure in RevenueCat dashboard:
-      URL: https://<your-backend>/api/v1/billing/webhook/revenuecat
-      Authorization: <REVENUECAT_WEBHOOK_SECRET>
+    plan_code = PAYSTACK_PLAN_CODES.get(body.interval)
+    if not plan_code:
+        raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
+
+    amounts = {
+        "monthly":    799,
+        "quarterly":  2099,
+        "biannually": 3899,
+        "annually":   7199,
+    }
+
+    payload = {
+        "email": current_user.email,
+        "amount": amounts[body.interval] * 100,  # Paystack expects amount in cents
+        "currency": "USD",
+        "plan": plan_code,
+        "metadata": {
+            "firebase_uid": current_user.firebase_uid,
+            "cancel_action": settings.WEB_APP_URL,
+        },
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{PAYSTACK_API}/transaction/initialize",
+            json=payload,
+            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        logger.error("Paystack initialize failed: %s", resp.text)
+        raise HTTPException(status_code=502, detail="Could not initialize payment")
+
+    data = resp.json().get("data", {})
+    return {
+        "authorization_url": data.get("authorization_url"),
+        "access_code": data.get("access_code"),
+        "reference": data.get("reference"),
+    }
+
+
+# ── Webhook ───────────────────────────────────────────────────────────────────
+
+@router.post("/webhook/paystack")
+async def paystack_webhook(
+    request: Request,
+    x_paystack_signature: str = Header(default=""),
+) -> dict:
+    """
+    Receives Paystack server-to-server events and updates user tier.
+
+    Configure in Paystack dashboard → Settings → API Keys & Webhooks:
+      URL: https://<your-backend>/api/v1/billing/webhook/paystack
     """
     body = await request.body()
 
-    if not _verify_signature(body, authorization):
+    if not _verify_paystack_signature(body, x_paystack_signature):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     payload = await request.json()
-    event = payload.get("event", {})
-    event_type = event.get("type", "")
-    app_user_id = event.get("app_user_id") or event.get("original_app_user_id")
-    product_id = event.get("product_id", "")
+    event = payload.get("event", "")
+    data = payload.get("data", {})
 
-    logger.info("RevenueCat webhook: type=%s app_user_id=%s product=%s", event_type, app_user_id, product_id)
+    customer = data.get("customer", {})
+    email = customer.get("email") or data.get("email", "")
 
-    if not app_user_id:
-        # Can't identify the user — acknowledge but ignore
+    logger.info("Paystack webhook: event=%s email=%s", event, email)
+
+    if not email:
         return {"received": True}
 
-    # app_user_id is set to the Firebase UID in the mobile SDK ($RCAnonymousID is the fallback)
-    user = await User.find_one(User.firebase_uid == app_user_id)
+    user = await User.find_one(User.email == email)
     if not user:
-        logger.warning("RevenueCat webhook: no user found for app_user_id=%s", app_user_id)
+        logger.warning("Paystack webhook: no user found for email=%s", email)
         return {"received": True}
 
-    # Store the RevenueCat ID for future reference
-    if not user.revenuecat_id:
-        await user.update(Set({User.revenuecat_id: app_user_id}))
+    # Subscription activated or renewed
+    if event in (
+        "subscription.create",
+        "charge.success",
+        "invoice.payment_succeeded",
+        "subscription.not_renew",  # un-cancel
+    ):
+        await _set_tier(user, "pro")
 
-    if event_type in ("INITIAL_PURCHASE", "RENEWAL", "PRODUCT_CHANGE", "UNCANCELLATION"):
-        new_tier = _PRODUCT_TIER.get(product_id, "pro")
-        await _set_tier(user, new_tier)
-
-    elif event_type in ("CANCELLATION", "EXPIRATION", "BILLING_ISSUE"):
+    # Subscription cancelled, payment failed, or disabled
+    elif event in (
+        "subscription.disable",
+        "invoice.payment_failed",
+        "subscription.expiry_date_update",
+    ):
         await _set_tier(user, "free")
 
     return {"received": True}
 
+
+# ── Billing status ────────────────────────────────────────────────────────────
 
 @router.get("/me")
 async def get_billing_status(current_user: User = Depends(get_current_user)) -> dict:

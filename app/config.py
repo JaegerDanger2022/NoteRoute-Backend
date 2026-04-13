@@ -72,8 +72,9 @@ class Settings(BaseSettings):
     # Admin — comma-separated Firebase UIDs allowed to access /admin endpoints
     ADMIN_FIREBASE_UIDS: str = ""
 
-    # RevenueCat — webhook secret for server-side event verification
-    REVENUECAT_WEBHOOK_SECRET: str = ""
+    # Paystack
+    PAYSTACK_SECRET_KEY: str = ""
+    PAYSTACK_PUBLIC_KEY: str = ""
 
 
 settings = Settings()
