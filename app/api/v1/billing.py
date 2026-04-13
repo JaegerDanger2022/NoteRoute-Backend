@@ -157,12 +157,12 @@ async def paystack_webhook(
             await user.update(Set({User.paystack_subscription_code: subscription_code}))
         await _set_tier(user, "pro")
 
-    # Renewed or un-cancelled
-    elif event in ("charge.success", "invoice.payment_succeeded", "subscription.not_renew"):
+    # Renewed
+    elif event in ("charge.success", "invoice.payment_succeeded"):
         await _set_tier(user, "pro")
 
-    # Cancelled, payment failed, or expired
-    elif event in ("subscription.disable", "invoice.payment_failed", "subscription.expiry_date_update"):
+    # Cancelled, payment failed, expired, or marked not-to-renew
+    elif event in ("subscription.disable", "subscription.not_renew", "invoice.payment_failed", "subscription.expiry_date_update"):
         await user.update(Set({User.paystack_subscription_code: None}))
         await _set_tier(user, "free")
 
