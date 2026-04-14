@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import json
 import logging
 
 import httpx
@@ -15,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-PAYSTACK_API = "https://api.paystack.co"
+POLAR_API = "https://api.polar.sh"
 
-# Plan codes from Paystack dashboard (Products → Plans)
-PAYSTACK_PLAN_CODES: dict[str, str] = {
-    "monthly":    "PLN_auj4ymqec30fwtk",
-    "quarterly":  "PLN_bt3tq1kcgw8uf2y",
-    "biannually": "PLN_ya121jv48qvlwmt",
-    "annually":   "PLN_nvc217h1xd7hrpv",
+# Polar product price IDs — create these in Polar dashboard under Products
+# One price per billing interval. Replace with your actual IDs after setup.
+POLAR_PRICE_IDS: dict[str, str] = {
+    "monthly":    "08fa1ac6-5846-473d-99ad-351f8de9e66d",
+    "quarterly":  "price_quarterly_placeholder",
+    "biannually": "price_biannually_placeholder",
+    "annually":   "price_annually_placeholder",
 }
 
 # Tier limit definitions
@@ -32,15 +34,19 @@ _TIER_LIMITS: dict[str, TierLimits] = {
 }
 
 
-def _verify_paystack_signature(body: bytes, signature: str) -> bool:
-    """Verify Paystack webhook HMAC-SHA512 signature."""
-    if not settings.PAYSTACK_SECRET_KEY:
-        logger.warning("PAYSTACK_SECRET_KEY not set — skipping signature verification")
+def _verify_polar_signature(body: bytes, signature: str) -> bool:
+    """Verify Polar webhook HMAC-SHA256 signature.
+
+    Polar sends the signature as: sha256=<hex>
+    Docs: https://docs.polar.sh/integrate/webhooks/overview
+    """
+    if not settings.POLAR_WEBHOOK_SECRET:
+        logger.warning("POLAR_WEBHOOK_SECRET not set — skipping signature verification")
         return True
-    expected = hmac.new(
-        settings.PAYSTACK_SECRET_KEY.encode(),
+    expected = "sha256=" + hmac.new(
+        settings.POLAR_WEBHOOK_SECRET.encode(),
         body,
-        hashlib.sha512,
+        hashlib.sha256,
     ).hexdigest()
     return hmac.compare_digest(expected, signature)
 
@@ -54,116 +60,121 @@ async def _set_tier(user: User, tier: str) -> None:
     logger.info("Updated user %s to tier=%s", user.id, tier)
 
 
-# ── Initialize transaction ────────────────────────────────────────────────────
+# ── Initialize checkout session ───────────────────────────────────────────────
 
 class InitializeRequest(BaseModel):
     interval: str = "monthly"  # monthly | quarterly | biannually | annually
 
 
-@router.post("/paystack/initialize")
-async def initialize_transaction(
+@router.post("/polar/initialize")
+async def initialize_checkout(
     body: InitializeRequest,
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """
-    Ask Paystack to create a subscription transaction for the current user.
-    Returns { authorization_url, access_code, reference } — the frontend
-    uses authorization_url to redirect or open the Paystack popup.
-    """
-    if not settings.PAYSTACK_SECRET_KEY:
-        raise HTTPException(status_code=500, detail="Paystack not configured")
+    Create a Polar checkout session for the current user.
+    Returns { checkout_url } — the frontend redirects the user there.
 
-    plan_code = PAYSTACK_PLAN_CODES.get(body.interval)
-    if not plan_code:
+    Polar docs: https://docs.polar.sh/integrate/checkout/embed
+    """
+    if not settings.POLAR_ACCESS_TOKEN:
+        raise HTTPException(status_code=500, detail="Polar not configured")
+
+    price_id = POLAR_PRICE_IDS.get(body.interval)
+    if not price_id:
         raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
 
-    # Amounts in GHS pesewas (integer, no decimals). Must match Paystack plan amounts exactly.
-    amounts_pesewas = {
-        "monthly":    13200,    # GHS 132.00
-        "quarterly":  34650,    # GHS 346.50
-        "biannually": 79118,    # GHS 791.18
-        "annually":   118958,   # GHS 1,189.58
-    }
-
     payload = {
-        "email": current_user.email,
-        "amount": amounts_pesewas[body.interval],
-        "plan": plan_code,
+        "products": [{"price_id": price_id}],
+        "customer_email": current_user.email,
         "metadata": {
             "firebase_uid": current_user.firebase_uid,
-            "cancel_action": f"{settings.WEB_APP_URL}/record",
         },
+        "success_url": f"{settings.WEB_APP_URL}/billing/callback?checkout_id={{CHECKOUT_ID}}",
     }
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            f"{PAYSTACK_API}/transaction/initialize",
+            f"{POLAR_API}/v1/checkouts",
             json=payload,
-            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
+            headers={
+                "Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}",
+                "Content-Type": "application/json",
+            },
             timeout=15,
         )
 
-    if resp.status_code != 200:
-        logger.error("Paystack initialize failed: status=%s body=%s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail=f"Paystack error: {resp.json().get('message', resp.text)}")
+    if resp.status_code not in (200, 201):
+        logger.error("Polar checkout failed: status=%s body=%s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail=f"Polar error: {resp.json().get('detail', resp.text)}")
 
-    data = resp.json().get("data", {})
+    data = resp.json()
     return {
-        "authorization_url": data.get("authorization_url"),
-        "access_code": data.get("access_code"),
-        "reference": data.get("reference"),
+        "checkout_url": data.get("url"),
+        "checkout_id": data.get("id"),
     }
 
 
 # ── Webhook ───────────────────────────────────────────────────────────────────
 
-@router.post("/webhook/paystack")
-async def paystack_webhook(
+@router.post("/webhook/polar")
+async def polar_webhook(
     request: Request,
-    x_paystack_signature: str = Header(default=""),
+    webhook_signature: str = Header(default="", alias="webhook-signature"),
 ) -> dict:
     """
-    Receives Paystack server-to-server events and updates user tier.
+    Receives Polar server-to-server events and updates user tier.
 
-    Configure in Paystack dashboard → Settings → API Keys & Webhooks:
-      URL: https://<your-backend>/api/v1/billing/webhook/paystack
+    Configure in Polar dashboard → Settings → Webhooks:
+      URL: https://<your-backend>/api/v1/billing/webhook/polar
+
+    Relevant events to subscribe to:
+      - subscription.active
+      - subscription.updated
+      - subscription.canceled
+      - subscription.revoked
     """
     body = await request.body()
 
-    if not _verify_paystack_signature(body, x_paystack_signature):
+    if not _verify_polar_signature(body, webhook_signature):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
-    payload = await request.json()
-    event = payload.get("event", "")
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    event_type = payload.get("type", "")
     data = payload.get("data", {})
 
+    # Customer email lives at data.customer.email or data.customer_email
     customer = data.get("customer", {})
-    email = customer.get("email") or data.get("email", "")
+    email = customer.get("email") or data.get("customer_email", "")
 
-    logger.info("Paystack webhook: event=%s email=%s", event, email)
+    logger.info("Polar webhook: event=%s email=%s", event_type, email)
 
     if not email:
         return {"received": True}
 
     user = await User.find_one(User.email == email)
     if not user:
-        logger.warning("Paystack webhook: no user found for email=%s", email)
+        logger.warning("Polar webhook: no user found for email=%s", email)
         return {"received": True}
 
-    # Subscription activated — save the subscription code for future cancellation
-    if event == "subscription.create":
-        subscription_code = data.get("subscription_code")
-        if subscription_code:
-            await user.update(Set({User.paystack_subscription_code: subscription_code}))
-        await _set_tier(user, "pro")
+    # Subscription activated or renewed
+    if event_type in ("subscription.active", "subscription.updated"):
+        subscription_id = data.get("id")
+        status = data.get("status")
+        if status == "active" and subscription_id:
+            await user.update(Set({User.polar_subscription_id: subscription_id}))
+            await _set_tier(user, "pro")
+        elif status in ("canceled", "revoked", "past_due", "unpaid"):
+            await user.update(Set({User.polar_subscription_id: None}))
+            await _set_tier(user, "free")
 
-    # Renewed
-    elif event in ("charge.success", "invoice.payment_succeeded"):
-        await _set_tier(user, "pro")
-
-    # Cancelled, payment failed, expired, or marked not-to-renew
-    elif event in ("subscription.disable", "subscription.not_renew", "invoice.payment_failed", "subscription.expiry_date_update"):
-        await user.update(Set({User.paystack_subscription_code: None}))
+    # Subscription cancelled or revoked
+    elif event_type in ("subscription.canceled", "subscription.revoked"):
+        await user.update(Set({User.polar_subscription_id: None}))
         await _set_tier(user, "free")
 
     return {"received": True}
@@ -171,40 +182,36 @@ async def paystack_webhook(
 
 # ── Cancel subscription ───────────────────────────────────────────────────────
 
-@router.post("/paystack/cancel")
+@router.post("/polar/cancel")
 async def cancel_subscription(
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Disable the user's active Paystack subscription."""
+    """Cancel the user's active Polar subscription."""
     if current_user.tier != "pro":
         raise HTTPException(status_code=400, detail="No active subscription to cancel")
 
-    if not current_user.paystack_subscription_code:
-        raise HTTPException(status_code=400, detail="Subscription code not found — please contact support")
+    if not current_user.polar_subscription_id:
+        raise HTTPException(status_code=400, detail="Subscription ID not found — please contact support")
 
-    if not settings.PAYSTACK_SECRET_KEY:
-        raise HTTPException(status_code=500, detail="Paystack not configured")
+    if not settings.POLAR_ACCESS_TOKEN:
+        raise HTTPException(status_code=500, detail="Polar not configured")
 
     async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{PAYSTACK_API}/subscription/disable",
-            json={
-                "code": current_user.paystack_subscription_code,
-                "token": "",  # Paystack requires token field — empty string is accepted
-            },
-            headers={"Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"},
+        resp = await client.delete(
+            f"{POLAR_API}/v1/subscriptions/{current_user.polar_subscription_id}",
+            headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
             timeout=15,
         )
 
-    if resp.status_code != 200:
-        logger.error("Paystack cancel failed: status=%s body=%s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail=f"Paystack error: {resp.json().get('message', resp.text)}")
+    if resp.status_code not in (200, 204):
+        logger.error("Polar cancel failed: status=%s body=%s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail=f"Polar error: {resp.text}")
 
     # Downgrade immediately — webhook will also fire as confirmation
-    await current_user.update(Set({User.paystack_subscription_code: None}))
+    await current_user.update(Set({User.polar_subscription_id: None}))
     await _set_tier(current_user, "free")
 
-    logger.info("User %s cancelled subscription", current_user.id)
+    logger.info("User %s cancelled Polar subscription", current_user.id)
     return {"cancelled": True}
 
 

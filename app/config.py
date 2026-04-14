@@ -72,9 +72,9 @@ class Settings(BaseSettings):
     # Admin — comma-separated Firebase UIDs allowed to access /admin endpoints
     ADMIN_FIREBASE_UIDS: str = ""
 
-    # Paystack
-    PAYSTACK_SECRET_KEY: str = ""
-    PAYSTACK_PUBLIC_KEY: str = ""
+    # Polar.sh
+    POLAR_ACCESS_TOKEN: str = ""        # from Polar dashboard → Settings → API Keys
+    POLAR_WEBHOOK_SECRET: str = ""      # from Polar dashboard → Settings → Webhooks
 
 
 settings = Settings()

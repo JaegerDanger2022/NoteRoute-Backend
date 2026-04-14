@@ -44,7 +44,7 @@ class User(Document):
     tier: Literal["free", "pro"] = "free"
     limits: TierLimits = Field(default_factory=TierLimits)
     usage: UsageCounters = Field(default_factory=UsageCounters)
-    paystack_subscription_code: str | None = None  # set on subscription.create webhook
+    polar_subscription_id: str | None = None  # set on subscription.active webhook
     active_source_id: PydanticObjectId | None = None
     custom_index: CustomIndexConfig | None = None
     custom_llm: Optional[CustomLLMConfig] = None
