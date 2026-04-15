@@ -21,7 +21,7 @@ POLAR_API = "https://sandbox-api.polar.sh"
 # Polar product price IDs — create these in Polar dashboard under Products
 # One price per billing interval. Replace with your actual IDs after setup.
 POLAR_PRICE_IDS: dict[str, str] = {
-    "monthly":    "08fa1ac6-5846-473d-99ad-351f8de9e66d",
+    "monthly":    "44d1afb5-daa7-497c-aa79-73d01c38f8b5",
     "quarterly":  "ced3932e-9df8-4f1e-be24-f4c0e4a80968",
     "biannually": "5115e0a5-ef0a-4efd-bba1-422964dc9231",
     "annually":   "dd8ec5e8-b8a5-4508-a39f-2f2b7070dd95",
