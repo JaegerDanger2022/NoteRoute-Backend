@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-POLAR_API = "https://api.polar.sh"
+POLAR_API = "https://sandbox-api.polar.sh"
 
 # Polar product price IDs — create these in Polar dashboard under Products
 # One price per billing interval. Replace with your actual IDs after setup.
