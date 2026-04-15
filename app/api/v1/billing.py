@@ -106,7 +106,11 @@ async def initialize_checkout(
 
     if resp.status_code not in (200, 201):
         logger.error("Polar checkout failed: status=%s body=%s", resp.status_code, resp.text)
-        raise HTTPException(status_code=502, detail=f"Polar error: {resp.json().get('detail', resp.text)}")
+        try:
+            detail = resp.json().get("detail", resp.text)
+        except Exception:
+            detail = resp.text
+        raise HTTPException(status_code=502, detail=f"Polar error: {detail}")
 
     data = resp.json()
     return {
