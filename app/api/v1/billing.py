@@ -93,7 +93,7 @@ async def initialize_checkout(
         "success_url": f"{settings.WEB_APP_URL}/billing/callback?checkout_id={{CHECKOUT_ID}}",
     }
 
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(follow_redirects=True) as client:
         resp = await client.post(
             f"{POLAR_API}/v1/checkouts",
             json=payload,
