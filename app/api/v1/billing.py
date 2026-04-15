@@ -22,9 +22,9 @@ POLAR_API = "https://api.polar.sh"
 # One price per billing interval. Replace with your actual IDs after setup.
 POLAR_PRICE_IDS: dict[str, str] = {
     "monthly":    "08fa1ac6-5846-473d-99ad-351f8de9e66d",
-    "quarterly":  "price_quarterly_placeholder",
-    "biannually": "price_biannually_placeholder",
-    "annually":   "price_annually_placeholder",
+    "quarterly":  "ced3932e-9df8-4f1e-be24-f4c0e4a80968",
+    "biannually": "5115e0a5-ef0a-4efd-bba1-422964dc9231",
+    "annually":   "dd8ec5e8-b8a5-4508-a39f-2f2b7070dd95",
 }
 
 # Tier limit definitions
@@ -85,7 +85,7 @@ async def initialize_checkout(
         raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
 
     payload = {
-        "products": [{"price_id": price_id}],
+        "product_price_id": price_id,
         "customer_email": current_user.email,
         "metadata": {
             "firebase_uid": current_user.firebase_uid,
