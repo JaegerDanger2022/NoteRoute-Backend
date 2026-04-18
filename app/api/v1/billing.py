@@ -60,6 +60,37 @@ async def _set_tier(user: User, tier: str) -> None:
     logger.info("Updated user %s to tier=%s", user.id, tier)
 
 
+# ── Plans (live prices from Polar) ───────────────────────────────────────────
+
+@router.get("/plans")
+async def get_plans() -> dict:
+    """Fetch live prices for each interval from Polar and return formatted amounts."""
+    if not settings.POLAR_ACCESS_TOKEN:
+        raise HTTPException(status_code=500, detail="Polar not configured")
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        results: dict[str, str] = {}
+        for interval, product_id in POLAR_PRODUCT_IDS.items():
+            resp = await client.get(
+                f"{POLAR_API}/v1/products/{product_id}",
+                headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                logger.warning("Failed to fetch product %s: %s", product_id, resp.status_code)
+                continue
+            data = resp.json()
+            for price in data.get("prices", []):
+                if price.get("amount_type") == "fixed" and not price.get("is_archived"):
+                    cents = price.get("price_amount", 0)
+                    currency = price.get("price_currency", "usd").upper()
+                    symbol = "$" if currency == "USD" else currency + " "
+                    results[interval] = f"{symbol}{cents / 100:.2f}"
+                    break
+
+    return results
+
+
 # ── Initialize checkout session ───────────────────────────────────────────────
 
 class InitializeRequest(BaseModel):
