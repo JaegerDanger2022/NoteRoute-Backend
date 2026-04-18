@@ -260,6 +260,34 @@ async def cancel_subscription(
     return {"cancelled": True}
 
 
+# ── Customer portal session ───────────────────────────────────────────────────
+
+@router.post("/polar/portal")
+async def create_portal_session(
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Create a Polar customer portal session and return the portal URL."""
+    if not settings.POLAR_ACCESS_TOKEN:
+        raise HTTPException(status_code=500, detail="Polar not configured")
+
+    async with httpx.AsyncClient(follow_redirects=True) as client:
+        resp = await client.post(
+            f"{POLAR_API}/v1/customer-sessions/",
+            json={
+                "external_customer_id": current_user.firebase_uid,
+                "return_url": f"{settings.WEB_APP_URL}/",
+            },
+            headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
+            timeout=10,
+        )
+
+    if resp.status_code not in (200, 201):
+        logger.error("Polar portal session failed: status=%s body=%s", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail="Failed to create portal session")
+
+    return {"portal_url": resp.json().get("customer_portal_url")}
+
+
 # ── Billing status ────────────────────────────────────────────────────────────
 
 @router.get("/me")
