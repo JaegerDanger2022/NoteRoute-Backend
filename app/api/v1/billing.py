@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import hmac
 import json
@@ -34,21 +35,28 @@ _TIER_LIMITS: dict[str, TierLimits] = {
 }
 
 
-def _verify_polar_signature(body: bytes, signature: str) -> bool:
-    """Verify Polar webhook HMAC-SHA256 signature.
+def _verify_polar_signature(body: bytes, msg_id: str, timestamp: str, signature: str) -> bool:
+    """Verify Polar webhook signature per Standard Webhooks spec.
 
-    Polar sends the signature as: sha256=<hex>
-    Docs: https://docs.polar.sh/integrate/webhooks/overview
+    Signed string: "{msg_id}.{timestamp}.{body}"
+    Secret is base64-encoded. Header format: "v1,<base64-signature>"
     """
     if not settings.POLAR_WEBHOOK_SECRET:
         logger.warning("POLAR_WEBHOOK_SECRET not set — skipping signature verification")
         return True
-    expected = "sha256=" + hmac.new(
-        settings.POLAR_WEBHOOK_SECRET.encode(),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(expected, signature)
+    try:
+        secret_bytes = base64.b64decode(settings.POLAR_WEBHOOK_SECRET)
+    except Exception:
+        secret_bytes = settings.POLAR_WEBHOOK_SECRET.encode()
+
+    signed = f"{msg_id}.{timestamp}.".encode() + body
+    expected_bytes = hmac.new(secret_bytes, signed, hashlib.sha256).digest()
+    expected_b64 = base64.b64encode(expected_bytes).decode()
+
+    for part in signature.split(" "):
+        if part.startswith("v1,") and hmac.compare_digest(part[3:], expected_b64):
+            return True
+    return False
 
 
 async def _set_tier(user: User, tier: str) -> None:
@@ -155,6 +163,8 @@ async def initialize_checkout(
 @router.post("/webhook/polar")
 async def polar_webhook(
     request: Request,
+    webhook_id: str = Header(default="", alias="webhook-id"),
+    webhook_timestamp: str = Header(default="", alias="webhook-timestamp"),
     webhook_signature: str = Header(default="", alias="webhook-signature"),
 ) -> dict:
     """
@@ -171,7 +181,7 @@ async def polar_webhook(
     """
     body = await request.body()
 
-    if not _verify_polar_signature(body, webhook_signature):
+    if not _verify_polar_signature(body, webhook_id, webhook_timestamp, webhook_signature):
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:
