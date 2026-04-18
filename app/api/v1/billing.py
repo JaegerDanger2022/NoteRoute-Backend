@@ -18,13 +18,13 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 POLAR_API = "https://sandbox-api.polar.sh"
 
-# Polar product price IDs — create these in Polar dashboard under Products
-# One price per billing interval. Replace with your actual IDs after setup.
-POLAR_PRICE_IDS: dict[str, str] = {
+# Polar product IDs — one product per billing interval.
+# Find these in Polar dashboard → Products → click product → copy the ID from the URL.
+POLAR_PRODUCT_IDS: dict[str, str] = {
     "monthly":    "44d1afb5-daa7-497c-aa79-73d01c38f8b5",
-    "quarterly":  "ced3932e-9df8-4f1e-be24-f4c0e4a80968",
-    "biannually": "5115e0a5-ef0a-4efd-bba1-422964dc9231",
-    "annually":   "dd8ec5e8-b8a5-4508-a39f-2f2b7070dd95",
+    "quarterly":  "b5cab4bc-3970-480e-b975-f8deee2b130c",
+    "biannually": "2332d5da-0162-4c09-a556-572cdf812839",
+    "annually":   "c09a378d-21cb-4344-8d01-130bfefdcda5",
 }
 
 # Tier limit definitions
@@ -80,12 +80,12 @@ async def initialize_checkout(
     if not settings.POLAR_ACCESS_TOKEN:
         raise HTTPException(status_code=500, detail="Polar not configured")
 
-    price_id = POLAR_PRICE_IDS.get(body.interval)
-    if not price_id:
+    product_id = POLAR_PRODUCT_IDS.get(body.interval)
+    if not product_id:
         raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
 
     payload = {
-        "product_price_id": price_id,
+        "products": [product_id],
         "customer_email": current_user.email,
         "metadata": {
             "firebase_uid": current_user.firebase_uid,
