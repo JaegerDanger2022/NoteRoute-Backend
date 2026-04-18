@@ -270,14 +270,28 @@ async def create_portal_session(
     if not settings.POLAR_ACCESS_TOKEN:
         raise HTTPException(status_code=500, detail="Polar not configured")
 
+    headers = {"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"}
     async with httpx.AsyncClient(follow_redirects=True) as client:
+        # Look up Polar customer ID by email
+        lookup = await client.get(
+            f"{POLAR_API}/v1/customers/",
+            params={"email": current_user.email, "limit": 1},
+            headers=headers,
+            timeout=10,
+        )
+        if lookup.status_code != 200 or not lookup.json().get("items"):
+            logger.error("Polar customer lookup failed: status=%s body=%s", lookup.status_code, lookup.text)
+            raise HTTPException(status_code=404, detail="No Polar customer found for this account")
+
+        customer_id = lookup.json()["items"][0]["id"]
+
         resp = await client.post(
             f"{POLAR_API}/v1/customer-sessions/",
             json={
-                "external_customer_id": current_user.firebase_uid,
+                "customer_id": customer_id,
                 "return_url": f"{settings.WEB_APP_URL}/",
             },
-            headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
+            headers=headers,
             timeout=10,
         )
 
