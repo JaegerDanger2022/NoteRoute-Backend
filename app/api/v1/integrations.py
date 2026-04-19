@@ -213,7 +213,7 @@ async def google_access_token(
         raise NotFoundError("Google integration not found")
 
     access_token = await _get_fresh_google_token(integration)
-    return {"access_token": access_token}
+    return {"access_token": access_token, "email": integration.provider_email}
 
 
 @router.get("/trello/token", response_model=None)
