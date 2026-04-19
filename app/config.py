@@ -73,9 +73,11 @@ class Settings(BaseSettings):
     ADMIN_FIREBASE_UIDS: str = ""
 
     # Polar.sh
-    POLAR_ACCESS_TOKEN: str = ""        # from Polar dashboard → Settings → API Keys
-    POLAR_WEBHOOK_SECRET: str = ""      # from Polar dashboard → Settings → Webhooks
-    POLAR_PRODUCTION: bool = False      # False = sandbox, True = production
+    POLAR_PRODUCTION: bool = False                  # False = sandbox, True = production
+    POLAR_SANDBOX_ACCESS_TOKEN: str = ""
+    POLAR_SANDBOX_WEBHOOK_SECRET: str = ""
+    POLAR_PRODUCTION_ACCESS_TOKEN: str = ""
+    POLAR_PRODUCTION_WEBHOOK_SECRET: str = ""
 
 
 settings = Settings()

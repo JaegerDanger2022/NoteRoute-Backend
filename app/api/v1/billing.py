@@ -43,6 +43,14 @@ def _polar_api() -> str:
 def _polar_product_ids() -> dict[str, str]:
     return _PRODUCTION_PRODUCT_IDS if settings.POLAR_PRODUCTION else _SANDBOX_PRODUCT_IDS
 
+
+def _polar_access_token() -> str:
+    return settings.POLAR_PRODUCTION_ACCESS_TOKEN if settings.POLAR_PRODUCTION else settings.POLAR_SANDBOX_ACCESS_TOKEN
+
+
+def _polar_webhook_secret() -> str:
+    return settings.POLAR_PRODUCTION_WEBHOOK_SECRET if settings.POLAR_PRODUCTION else settings.POLAR_SANDBOX_WEBHOOK_SECRET
+
 # Tier limit definitions
 _TIER_LIMITS: dict[str, TierLimits] = {
     "free": TierLimits(max_sources=1, max_slots=20, max_image_inputs_per_month=3),
@@ -56,13 +64,13 @@ def _verify_polar_signature(body: bytes, msg_id: str, timestamp: str, signature:
     Signed string: "{msg_id}.{timestamp}.{body}"
     Secret is base64-encoded. Header format: "v1,<base64-signature>"
     """
-    if not settings.POLAR_WEBHOOK_SECRET:
+    if not _polar_webhook_secret():
         logger.warning("POLAR_WEBHOOK_SECRET not set — skipping signature verification")
         return True
     try:
-        secret_bytes = base64.b64decode(settings.POLAR_WEBHOOK_SECRET)
+        secret_bytes = base64.b64decode(_polar_webhook_secret())
     except Exception:
-        secret_bytes = settings.POLAR_WEBHOOK_SECRET.encode()
+        secret_bytes = _polar_webhook_secret().encode()
 
     signed = f"{msg_id}.{timestamp}.".encode() + body
     expected_bytes = hmac.new(secret_bytes, signed, hashlib.sha256).digest()
@@ -88,7 +96,7 @@ async def _set_tier(user: User, tier: str) -> None:
 @router.get("/plans")
 async def get_plans() -> dict:
     """Fetch live prices for each interval from Polar and return formatted amounts."""
-    if not settings.POLAR_ACCESS_TOKEN:
+    if not _polar_access_token():
         raise HTTPException(status_code=500, detail="Polar not configured")
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -96,7 +104,7 @@ async def get_plans() -> dict:
         for interval, product_id in _polar_product_ids().items():
             resp = await client.get(
                 f"{_polar_api()}/v1/products/{product_id}",
-                headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
+                headers={"Authorization": f"Bearer {_polar_access_token()}"},
                 timeout=10,
             )
             if resp.status_code != 200:
@@ -131,7 +139,7 @@ async def initialize_checkout(
 
     Polar docs: https://docs.polar.sh/integrate/checkout/embed
     """
-    if not settings.POLAR_ACCESS_TOKEN:
+    if not _polar_access_token():
         raise HTTPException(status_code=500, detail="Polar not configured")
 
     product_id = _polar_product_ids().get(body.interval)
@@ -152,7 +160,7 @@ async def initialize_checkout(
             f"{_polar_api()}/v1/checkouts",
             json=payload,
             headers={
-                "Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}",
+                "Authorization": f"Bearer {_polar_access_token()}",
                 "Content-Type": "application/json",
             },
             timeout=15,
@@ -281,13 +289,13 @@ async def cancel_subscription(
     if not current_user.polar_subscription_id:
         raise HTTPException(status_code=400, detail="Subscription ID not found — please contact support")
 
-    if not settings.POLAR_ACCESS_TOKEN:
+    if not _polar_access_token():
         raise HTTPException(status_code=500, detail="Polar not configured")
 
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
             f"{_polar_api()}/v1/subscriptions/{current_user.polar_subscription_id}",
-            headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
+            headers={"Authorization": f"Bearer {_polar_access_token()}"},
             timeout=15,
         )
 
@@ -310,10 +318,10 @@ async def create_portal_session(
     current_user: User = Depends(get_current_user),
 ) -> dict:
     """Create a Polar customer portal session and return the portal URL."""
-    if not settings.POLAR_ACCESS_TOKEN:
+    if not _polar_access_token():
         raise HTTPException(status_code=500, detail="Polar not configured")
 
-    headers = {"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"}
+    headers = {"Authorization": f"Bearer {_polar_access_token()}"}
     async with httpx.AsyncClient(follow_redirects=True) as client:
         # Look up Polar customer ID by email
         lookup = await client.get(
