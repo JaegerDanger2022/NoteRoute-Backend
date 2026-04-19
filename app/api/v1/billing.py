@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+from datetime import datetime
 
 import httpx
 from beanie.operators import Set
@@ -212,22 +213,42 @@ async def polar_webhook(
         subscription_id = data.get("id")
         status = data.get("status")
         cancel_at_period_end = data.get("cancel_at_period_end", False)
-        if status == "active" and subscription_id and not cancel_at_period_end:
+        current_period_end = data.get("current_period_end")  # ISO datetime string from Polar
+
+        if status == "active" and subscription_id:
             recurring_interval = data.get("recurring_interval")
             interval_map = {"month": "monthly", "quarter": "quarterly", "semi_annual": "biannually", "year": "annually"}
             polar_interval = interval_map.get(recurring_interval)
-            await user.update(Set({
-                User.polar_subscription_id: subscription_id,
-                User.polar_interval: polar_interval,
-            }))
-            await _set_tier(user, "pro")
-        elif status in ("canceled", "revoked", "past_due", "unpaid") or cancel_at_period_end:
-            await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None}))
+
+            if cancel_at_period_end and current_period_end:
+                # User cancelled but still within their paid period — keep pro until period ends
+                try:
+                    cancel_at = datetime.fromisoformat(current_period_end.replace("Z", "+00:00"))
+                except Exception:
+                    cancel_at = None
+                await user.update(Set({
+                    User.polar_subscription_id: subscription_id,
+                    User.polar_interval: polar_interval,
+                    User.polar_cancel_at: cancel_at,
+                }))
+                # Do NOT downgrade yet — pro access continues until cancel_at
+            else:
+                # Active subscription (not cancelled) — ensure pro and clear any pending cancel
+                await user.update(Set({
+                    User.polar_subscription_id: subscription_id,
+                    User.polar_interval: polar_interval,
+                    User.polar_cancel_at: None,
+                }))
+                await _set_tier(user, "pro")
+
+        elif status in ("revoked", "past_due", "unpaid"):
+            # Hard failures — downgrade immediately
+            await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None, User.polar_cancel_at: None}))
             await _set_tier(user, "free")
 
-    # Subscription cancelled or revoked
+    # Subscription fully expired after cancellation, or revoked by admin
     elif event_type in ("subscription.canceled", "subscription.revoked"):
-        await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None}))
+        await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None, User.polar_cancel_at: None}))
         await _set_tier(user, "free")
 
     return {"received": True}
@@ -260,9 +281,9 @@ async def cancel_subscription(
         logger.error("Polar cancel failed: status=%s body=%s", resp.status_code, resp.text)
         raise HTTPException(status_code=502, detail=f"Polar error: {resp.text}")
 
-    # Downgrade immediately — webhook will also fire as confirmation
-    await current_user.update(Set({User.polar_subscription_id: None}))
-    await _set_tier(current_user, "free")
+    # Don't downgrade yet — the subscription.updated webhook from Polar will
+    # carry current_period_end and set polar_cancel_at. The actual downgrade
+    # happens when subscription.canceled fires at period end.
 
     logger.info("User %s cancelled Polar subscription", current_user.id)
     return {"cancelled": True}
@@ -328,4 +349,5 @@ async def get_billing_status(current_user: User = Depends(get_current_user)) -> 
             "image_inputs_this_month": current_user.usage.image_inputs_this_month,
         },
         "subscription_interval": current_user.polar_interval,
+        "cancel_at": current_user.polar_cancel_at.isoformat() if current_user.polar_cancel_at else None,
     }

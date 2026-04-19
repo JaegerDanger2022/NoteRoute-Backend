@@ -46,6 +46,7 @@ class User(Document):
     usage: UsageCounters = Field(default_factory=UsageCounters)
     polar_subscription_id: str | None = None
     polar_interval: str | None = None  # monthly | quarterly | biannually | annually
+    polar_cancel_at: datetime | None = None  # set when cancelled; downgrade happens at this date
     active_source_id: PydanticObjectId | None = None
     custom_index: CustomIndexConfig | None = None
     custom_llm: Optional[CustomLLMConfig] = None
