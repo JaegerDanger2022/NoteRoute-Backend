@@ -28,6 +28,7 @@ class ProcessRequest(BaseModel):
 class ProcessStreamRequest(BaseModel):
     audio_s3_key: str
     audio_duration_sec: float = 0.0
+    transcribe_only: bool = False
 
 
 class ProcessTextStreamRequest(BaseModel):
@@ -97,7 +98,40 @@ async def process_stream(
     body: ProcessStreamRequest,
     current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
-    """Start a streaming pipeline run and proxy the SSE stream from LangGraph."""
+    """Start a streaming pipeline run and proxy the SSE stream from LangGraph.
+    If transcribe_only=True, calls the lightweight /transcribe endpoint and
+    emits a single SSE event with the transcript — no routing pipeline."""
+
+    if body.transcribe_only:
+        async def _transcribe_stream():
+            try:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    resp = await client.post(
+                        f"{settings.langgraph_url}/transcribe",
+                        json={
+                            "audio_s3_key": body.audio_s3_key,
+                            "audio_duration_sec": body.audio_duration_sec,
+                            "user_id": str(current_user.id),
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if data.get("error"):
+                        yield f"data: {json.dumps({'node': 'error', 'error': data['error']})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'node': 'transcribe', 'transcript': data.get('transcript', '')})}\n\n"
+            except Exception as e:
+                logger.error("Transcribe-only stream failed: %s", e)
+                yield f"data: {json.dumps({'node': 'error', 'error': str(e)})}\n\n"
+            finally:
+                yield f"data: {json.dumps({'node': 'done'})}\n\n"
+
+        return StreamingResponse(
+            _transcribe_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     if not current_user.active_source_id:
         raise NotFoundError("No active source selected. Select a source before recording.")
 
