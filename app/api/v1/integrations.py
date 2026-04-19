@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -91,7 +91,7 @@ async def connect_integration(
             f"&scope={_GOOGLE_CONNECT_SCOPES}"
             f"&access_type=offline"
             f"&include_granted_scopes=true"
-            f"&prompt=select_account"
+            f"&prompt=select_account consent"
             f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
             f"&state={state}"
         )
@@ -490,8 +490,9 @@ async def _handle_google_callback(code: str, state: str) -> None:
 
         access_token = tokens["access_token"]
         refresh_token = tokens.get("refresh_token")
-        # Parse and store all granted scopes from the token response
         granted_scopes = tokens.get("scope", "").split()
+        expires_in = tokens.get("expires_in", 3600)
+        token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
 
         profile_resp = await client.get(
             "https://www.googleapis.com/oauth2/v2/userinfo",
@@ -517,9 +518,9 @@ async def _handle_google_callback(code: str, state: str) -> None:
 
     if existing:
         existing.tokens.access_token = encrypted_access
+        existing.tokens.expires_at = token_expires_at
         if encrypted_refresh:
             existing.tokens.refresh_token = encrypted_refresh
-        # Merge new scopes with any previously granted ones
         existing.tokens.scopes = list(set(existing.tokens.scopes) | set(granted_scopes))
         existing.provider_email = provider_email
         existing.is_active = True
@@ -532,6 +533,7 @@ async def _handle_google_callback(code: str, state: str) -> None:
             tokens=OAuthTokens(
                 access_token=encrypted_access,
                 refresh_token=encrypted_refresh,
+                expires_at=token_expires_at,
                 scopes=granted_scopes,
             ),
             provider_user_id=provider_user_id,
