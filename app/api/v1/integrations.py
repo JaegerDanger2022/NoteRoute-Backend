@@ -90,7 +90,7 @@ async def connect_integration(
             f"&scope={_GOOGLE_CONNECT_SCOPES}"
             f"&access_type=offline"
             f"&include_granted_scopes=true"
-            f"&prompt=select_account consent"
+            f"&prompt=select_account"
             f"&redirect_uri={settings.GOOGLE_REDIRECT_URI}"
             f"&state={state}"
         )
