@@ -18,16 +18,30 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
-POLAR_API = "https://sandbox-api.polar.sh"
+_SANDBOX_API = "https://sandbox-api.polar.sh"
+_PRODUCTION_API = "https://api.polar.sh"
 
-# Polar product IDs — one product per billing interval.
-# Find these in Polar dashboard → Products → click product → copy the ID from the URL.
-POLAR_PRODUCT_IDS: dict[str, str] = {
+_SANDBOX_PRODUCT_IDS: dict[str, str] = {
     "monthly":    "44d1afb5-daa7-497c-aa79-73d01c38f8b5",
     "quarterly":  "b5cab4bc-3970-480e-b975-f8deee2b130c",
     "biannually": "2332d5da-0162-4c09-a556-572cdf812839",
     "annually":   "c09a378d-21cb-4344-8d01-130bfefdcda5",
 }
+
+_PRODUCTION_PRODUCT_IDS: dict[str, str] = {
+    "monthly":    "08fa1ac6-5846-473d-99ad-351f8de9e66d",
+    "quarterly":  "ced3932e-9df8-4f1e-be24-f4c0e4a80968",
+    "biannually": "5115e0a5-ef0a-4efd-bba1-422964dc9231",
+    "annually":   "dd8ec5e8-b8a5-4508-a39f-2f2b7070dd95",
+}
+
+
+def _polar_api() -> str:
+    return _PRODUCTION_API if settings.POLAR_PRODUCTION else _SANDBOX_API
+
+
+def _polar_product_ids() -> dict[str, str]:
+    return _PRODUCTION_PRODUCT_IDS if settings.POLAR_PRODUCTION else _SANDBOX_PRODUCT_IDS
 
 # Tier limit definitions
 _TIER_LIMITS: dict[str, TierLimits] = {
@@ -79,9 +93,9 @@ async def get_plans() -> dict:
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         results: dict[str, str] = {}
-        for interval, product_id in POLAR_PRODUCT_IDS.items():
+        for interval, product_id in _polar_product_ids().items():
             resp = await client.get(
-                f"{POLAR_API}/v1/products/{product_id}",
+                f"{_polar_api()}/v1/products/{product_id}",
                 headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
                 timeout=10,
             )
@@ -120,7 +134,7 @@ async def initialize_checkout(
     if not settings.POLAR_ACCESS_TOKEN:
         raise HTTPException(status_code=500, detail="Polar not configured")
 
-    product_id = POLAR_PRODUCT_IDS.get(body.interval)
+    product_id = _polar_product_ids().get(body.interval)
     if not product_id:
         raise HTTPException(status_code=400, detail=f"Unknown interval: {body.interval}")
 
@@ -135,7 +149,7 @@ async def initialize_checkout(
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
         resp = await client.post(
-            f"{POLAR_API}/v1/checkouts",
+            f"{_polar_api()}/v1/checkouts",
             json=payload,
             headers={
                 "Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}",
@@ -272,7 +286,7 @@ async def cancel_subscription(
 
     async with httpx.AsyncClient() as client:
         resp = await client.delete(
-            f"{POLAR_API}/v1/subscriptions/{current_user.polar_subscription_id}",
+            f"{_polar_api()}/v1/subscriptions/{current_user.polar_subscription_id}",
             headers={"Authorization": f"Bearer {settings.POLAR_ACCESS_TOKEN}"},
             timeout=15,
         )
@@ -303,7 +317,7 @@ async def create_portal_session(
     async with httpx.AsyncClient(follow_redirects=True) as client:
         # Look up Polar customer ID by email
         lookup = await client.get(
-            f"{POLAR_API}/v1/customers/",
+            f"{_polar_api()}/v1/customers/",
             params={"email": current_user.email, "limit": 1},
             headers=headers,
             timeout=10,
@@ -315,7 +329,7 @@ async def create_portal_session(
         customer_id = lookup.json()["items"][0]["id"]
 
         resp = await client.post(
-            f"{POLAR_API}/v1/customer-sessions/",
+            f"{_polar_api()}/v1/customer-sessions/",
             json={
                 "customer_id": customer_id,
                 "return_url": f"{settings.WEB_APP_URL}/",

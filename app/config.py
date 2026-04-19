@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     # Polar.sh
     POLAR_ACCESS_TOKEN: str = ""        # from Polar dashboard → Settings → API Keys
     POLAR_WEBHOOK_SECRET: str = ""      # from Polar dashboard → Settings → Webhooks
+    POLAR_PRODUCTION: bool = False      # False = sandbox, True = production
 
 
 settings = Settings()
