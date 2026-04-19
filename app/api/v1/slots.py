@@ -141,6 +141,14 @@ async def routing_summaries_for_source(
         KnowledgeSlot.parent_slot_id == None,  # top-level slots only
     ).to_list()
 
+    # Mirror the frontend lock logic: oldest slots are active, newest beyond the
+    # user's limit are locked and must not be considered during routing.
+    user = await User.get(uid)
+    if user and not is_admin(user):
+        max_slots = user.limits.max_slots if user.limits else 50
+        slots_by_age = sorted(slots, key=lambda s: s.created_at or datetime.min)
+        slots = slots_by_age[:max_slots]
+
     return [
         {
             "slot_id": str(slot.id),
