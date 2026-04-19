@@ -196,7 +196,8 @@ async def polar_webhook(
     customer = data.get("customer", {})
     email = customer.get("email") or data.get("customer_email", "")
 
-    logger.info("Polar webhook: event=%s email=%s", event_type, email)
+    logger.info("Polar webhook: event=%s email=%s status=%s cancel_at_period_end=%s",
+                event_type, email, data.get("status"), data.get("cancel_at_period_end"))
 
     if not email:
         return {"received": True}
@@ -210,8 +211,9 @@ async def polar_webhook(
     if event_type in ("subscription.active", "subscription.updated"):
         subscription_id = data.get("id")
         status = data.get("status")
-        if status == "active" and subscription_id:
-            recurring_interval = data.get("recurring_interval")  # month | quarter | semi_annual | year
+        cancel_at_period_end = data.get("cancel_at_period_end", False)
+        if status == "active" and subscription_id and not cancel_at_period_end:
+            recurring_interval = data.get("recurring_interval")
             interval_map = {"month": "monthly", "quarter": "quarterly", "semi_annual": "biannually", "year": "annually"}
             polar_interval = interval_map.get(recurring_interval)
             await user.update(Set({
@@ -219,7 +221,7 @@ async def polar_webhook(
                 User.polar_interval: polar_interval,
             }))
             await _set_tier(user, "pro")
-        elif status in ("canceled", "revoked", "past_due", "unpaid"):
+        elif status in ("canceled", "revoked", "past_due", "unpaid") or cancel_at_period_end:
             await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None}))
             await _set_tier(user, "free")
 
