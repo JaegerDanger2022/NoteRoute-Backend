@@ -211,15 +211,21 @@ async def polar_webhook(
         subscription_id = data.get("id")
         status = data.get("status")
         if status == "active" and subscription_id:
-            await user.update(Set({User.polar_subscription_id: subscription_id}))
+            recurring_interval = data.get("recurring_interval")  # month | quarter | semi_annual | year
+            interval_map = {"month": "monthly", "quarter": "quarterly", "semi_annual": "biannually", "year": "annually"}
+            polar_interval = interval_map.get(recurring_interval)
+            await user.update(Set({
+                User.polar_subscription_id: subscription_id,
+                User.polar_interval: polar_interval,
+            }))
             await _set_tier(user, "pro")
         elif status in ("canceled", "revoked", "past_due", "unpaid"):
-            await user.update(Set({User.polar_subscription_id: None}))
+            await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None}))
             await _set_tier(user, "free")
 
     # Subscription cancelled or revoked
     elif event_type in ("subscription.canceled", "subscription.revoked"):
-        await user.update(Set({User.polar_subscription_id: None}))
+        await user.update(Set({User.polar_subscription_id: None, User.polar_interval: None}))
         await _set_tier(user, "free")
 
     return {"received": True}
@@ -319,4 +325,5 @@ async def get_billing_status(current_user: User = Depends(get_current_user)) -> 
             "slots_count": current_user.usage.slots_count,
             "image_inputs_this_month": current_user.usage.image_inputs_this_month,
         },
+        "subscription_interval": current_user.polar_interval,
     }
