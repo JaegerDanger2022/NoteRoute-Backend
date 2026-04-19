@@ -25,11 +25,13 @@ _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _SLACK_AUTH_URL = "https://slack.com/oauth/v2/authorize"
 _SLACK_TOKEN_URL = "https://slack.com/api/oauth.v2.access"
 
-# drive.readonly lets the Picker list and select existing docs; drive.file lets
-# the app append content to docs it was granted access to.
+# drive.file grants read+write to files the user explicitly selects via Google
+# Picker and to files created by this app.
+# drive.metadata.readonly is non-restricted and lets the Picker browse the
+# user's existing files without triggering Google's unverified-app warning.
 _GOOGLE_CONNECT_SCOPES = (
-    "https://www.googleapis.com/auth/drive.readonly "
     "https://www.googleapis.com/auth/drive.file "
+    "https://www.googleapis.com/auth/drive.metadata.readonly "
     "https://www.googleapis.com/auth/userinfo.email"
 )
 _GOOGLE_WRITE_SCOPE = "https://www.googleapis.com/auth/drive.file"
