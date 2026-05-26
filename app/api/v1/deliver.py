@@ -293,15 +293,19 @@ async def _save_as_new_slot(
         task = await todoist_svc.create_task(task_title, content, access_token, project_id=project["id"])
         resource = {"id": project["id"], "name": project["name"], "url": project.get("url")}
     elif source.provider == "trello":
-        # Save to the first list of the first board
-        boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
-        if not boards:
-            raise ValueError("No Trello boards found")
-        lists = await trello_svc.list_lists(boards[0]["id"], settings.TRELLO_API_KEY, access_token)
-        if not lists:
-            raise ValueError("No Trello lists found on first board")
-        card = await trello_svc.create_card(lists[0]["id"], title, content, settings.TRELLO_API_KEY, access_token)
-        resource = {"id": lists[0]["id"], "name": f"{boards[0]['name']} > {lists[0]['name']}", "url": card.get("url")}
+        # Check board count before creating — Trello free plan allows 10 open boards.
+        existing_boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
+        if len(existing_boards) >= trello_svc.TRELLO_FREE_BOARD_LIMIT:
+            raise ValueError(
+                f"Trello board limit reached ({trello_svc.TRELLO_FREE_BOARD_LIMIT} open boards). "
+                "Close or delete unused boards in Trello to create more, or upgrade to Trello Standard/Premium."
+            )
+        # Create a new board + a default "Notes" list, then drop the first card there.
+        board = await trello_svc.create_board(title, settings.TRELLO_API_KEY, access_token)
+        lst = await trello_svc.create_list(board["id"], "Notes", settings.TRELLO_API_KEY, access_token)
+        card_title = (summary.split("\n")[0].strip()[:80] if summary else None) or (content.split(". ")[0].strip()[:80]) or "Note"
+        await trello_svc.create_card(lst["id"], card_title, content, settings.TRELLO_API_KEY, access_token)
+        resource = {"id": lst["id"], "name": f"{board['name']} > {lst['name']}", "url": board.get("url")}
     else:
         raise ValueError(f"Unknown provider: {source.provider}")
 
