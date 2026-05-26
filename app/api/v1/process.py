@@ -515,4 +515,7 @@ async def confirm_slot(
         "delivery_status": delivery_status,
         "delivery_error": lg_result.get("delivery_error"),
         "delivered_at": lg_result.get("delivered_at"),
+        "slot_id": lg_result.get("slot_id"),
+        "slot_name": lg_result.get("slot_name"),
+        "saved_as_new_slot": lg_result.get("saved_as_new_slot", False),
     }
