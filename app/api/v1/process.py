@@ -46,6 +46,7 @@ class ConfirmRequest(BaseModel):
     trello_checklist_title: str | None = None
     trello_checklist_id: str | None = None
     notion_parent_page_id: str | None = None
+    trello_board_id: str | None = None
 
 
 class ProcessImageStreamRequest(BaseModel):
@@ -60,6 +61,7 @@ class CreateDocRequest(BaseModel):
     image_s3_key: str = ""  # if provided, extract image text first and use as content
     extraction_mode: str = "vision"  # "ocr" | "vision"
     source_id: str = ""  # optional: override user's active_source_id (prevents multi-device race)
+    trello_board_id: str = ""
 
 
 @router.post("")
@@ -355,6 +357,7 @@ async def create_doc(
             route,
             body.doc_title or None,
             override_source_id=effective_source_id,
+            trello_board_id=body.trello_board_id or None,
         )
         now = datetime.now(timezone.utc)
         route.status = "delivered"
@@ -480,6 +483,7 @@ async def confirm_slot(
                 "trello_checklist_title": body.trello_checklist_title,
                 "trello_checklist_id": body.trello_checklist_id,
                 "notion_parent_page_id": body.notion_parent_page_id,
+                "trello_board_id": body.trello_board_id,
             },
         )
         resp.raise_for_status()

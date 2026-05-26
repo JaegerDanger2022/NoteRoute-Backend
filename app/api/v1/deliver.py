@@ -86,6 +86,7 @@ class DeliverRequest(BaseModel):
     trello_checklist_title: str | None = None
     trello_checklist_id: str | None = None
     notion_parent_page_id: str | None = None  # parent page when save_as_slot=True for notion
+    trello_board_id: str | None = None  # board to create list in when save_as_slot=True for trello
 
 
 @router.post("")
@@ -107,7 +108,7 @@ async def deliver(body: DeliverRequest) -> dict:
 
     try:
         if body.save_as_slot:
-            result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title, body.notion_parent_page_id)
+            result = await _save_as_new_slot(user, body.content, body.summary, route, body.doc_title, body.notion_parent_page_id, trello_board_id=body.trello_board_id)
         else:
             result = await _deliver_to_slot(body.slot_id, body.content, user, body.target_tab_id, body.summary, body.trello_format, body.trello_checklist_title, body.trello_checklist_id)
 
@@ -236,6 +237,7 @@ async def _save_as_new_slot(
     doc_title: str | None = None,
     notion_parent_page_id: str | None = None,
     override_source_id=None,
+    trello_board_id: str | None = None,
 ) -> dict:
     """Create a new resource in the provider + save it as a KnowledgeSlot."""
     source_id = override_source_id or user.active_source_id
@@ -293,16 +295,12 @@ async def _save_as_new_slot(
         task = await todoist_svc.create_task(task_title, content, access_token, project_id=project["id"])
         resource = {"id": project["id"], "name": project["name"], "url": project.get("url")}
     elif source.provider == "trello":
-        # Check board count before creating — Trello free plan allows 10 open boards.
-        existing_boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
-        if len(existing_boards) >= trello_svc.TRELLO_FREE_BOARD_LIMIT:
-            raise ValueError(
-                f"Trello board limit reached ({trello_svc.TRELLO_FREE_BOARD_LIMIT} open boards). "
-                "Close or delete unused boards in Trello to create more, or upgrade to Trello Standard/Premium."
-            )
-        # Create a new board + a default "Notes" list, then drop the first card there.
-        board = await trello_svc.create_board(title, settings.TRELLO_API_KEY, access_token)
-        lst = await trello_svc.create_list(board["id"], "Notes", settings.TRELLO_API_KEY, access_token)
+        # Create a new list on the selected board (list = destination, card = note).
+        boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)
+        if not boards:
+            raise ValueError("No Trello boards found. Create a board in Trello first.")
+        board = next((b for b in boards if b["id"] == trello_board_id), boards[0])
+        lst = await trello_svc.create_list(board["id"], title, settings.TRELLO_API_KEY, access_token)
         card_title = (summary.split("\n")[0].strip()[:80] if summary else None) or (content.split(". ")[0].strip()[:80]) or "Note"
         await trello_svc.create_card(lst["id"], card_title, content, settings.TRELLO_API_KEY, access_token)
         resource = {"id": lst["id"], "name": f"{board['name']} > {lst['name']}", "url": board.get("url")}

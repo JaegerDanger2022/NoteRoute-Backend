@@ -28,22 +28,6 @@ async def get_user_info(api_key: str, token: str) -> dict:
     }
 
 
-TRELLO_FREE_BOARD_LIMIT = 10
-
-
-async def create_board(name: str, api_key: str, token: str) -> dict:
-    """Create a new Trello board and return {id, name, url}."""
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{_BASE}/boards",
-            params=_params(api_key, token),
-            json={"name": name, "defaultLists": False},
-        )
-        resp.raise_for_status()
-        board = resp.json()
-    return {"id": board["id"], "name": board["name"], "url": board.get("shortUrl")}
-
-
 async def create_list(board_id: str, name: str, api_key: str, token: str) -> dict:
     """Create a new list on a board and return {id, name}."""
     async with httpx.AsyncClient() as client:
