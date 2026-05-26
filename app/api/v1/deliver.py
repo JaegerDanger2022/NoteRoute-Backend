@@ -171,9 +171,7 @@ async def _deliver_to_slot(slot_id: str | None, content: str, user: User, target
         await slack_svc.post_message(slot.destination.resource_id, content, access_token)
     elif source.provider == "todoist":
         resource_id = slot.destination.resource_id
-        # Use first sentence / first 80 chars of transcript as title; full transcript as body
-        first_sentence = content.split(".")[0].strip()
-        task_title = (first_sentence[:80] if first_sentence else content[:80]).strip() or "Note"
+        task_title = (summary.split("\n")[0].strip()[:80] if summary else None) or (content.split(". ")[0].strip()[:80]) or "Note"
         if " > " in (slot.destination.resource_name or ""):
             await todoist_svc.create_task(task_title, content, access_token, section_id=resource_id)
         else:
@@ -279,17 +277,21 @@ async def _save_as_new_slot(
         await slack_svc.post_message(channel["id"], content, access_token)
         resource = channel
     elif source.provider == "todoist":
-        # Save to the user's inbox project (falls back to first project)
+        # Create a new Todoist project for this slot.
+        # Check project count first — Todoist free plan allows 5, pro allows 300.
         projects = await todoist_svc.list_projects(access_token)
-        inbox = next((p for p in projects if p.get("is_inbox_project")), None)
-        target = inbox or (projects[0] if projects else None)
-        if not target:
-            raise ValueError("No Todoist projects found")
-        # Use first sentence / first 80 chars of transcript as title; full transcript as body
-        first_sentence = content.split(".")[0].strip()
-        task_title = (first_sentence[:80] if first_sentence else content[:80]).strip() or "Note"
-        task = await todoist_svc.create_task(task_title, content, access_token, project_id=target["id"])
-        resource = {"id": task["id"], "name": task["name"], "url": task.get("url")}
+        user_project_count = todoist_svc.count_user_projects(projects)
+        is_pro = getattr(user, "tier", "free") == "pro"
+        project_limit = todoist_svc.TODOIST_PRO_PROJECT_LIMIT if is_pro else todoist_svc.TODOIST_FREE_PROJECT_LIMIT
+        if user_project_count >= project_limit:
+            raise ValueError(
+                f"Todoist project limit reached ({project_limit} projects). "
+                f"{'Upgrade your Todoist plan' if not is_pro else 'Delete unused projects'} to create more."
+            )
+        project = await todoist_svc.create_project(title, access_token)
+        task_title = (summary.split("\n")[0].strip()[:80] if summary else None) or (content.split(". ")[0].strip()[:80]) or "Note"
+        task = await todoist_svc.create_task(task_title, content, access_token, project_id=project["id"])
+        resource = {"id": project["id"], "name": project["name"], "url": project.get("url")}
     elif source.provider == "trello":
         # Save to the first list of the first board
         boards = await trello_svc.list_boards(settings.TRELLO_API_KEY, access_token)

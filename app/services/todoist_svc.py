@@ -72,6 +72,32 @@ async def list_sections(project_id: str, access_token: str) -> list[dict]:
     ]
 
 
+TODOIST_FREE_PROJECT_LIMIT = 5
+TODOIST_PRO_PROJECT_LIMIT = 300
+
+
+async def create_project(name: str, access_token: str) -> dict:
+    """Create a new Todoist project and return {id, name, url}."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{_BASE}/projects",
+            json={"name": name},
+            headers=_headers(access_token),
+        )
+        resp.raise_for_status()
+        project = resp.json()
+    return {
+        "id": str(project["id"]),
+        "name": project["name"],
+        "url": project.get("url"),
+    }
+
+
+def count_user_projects(projects: list[dict]) -> int:
+    """Return the number of non-inbox projects."""
+    return sum(1 for p in projects if not p.get("is_inbox_project", False))
+
+
 async def create_task(
     content: str,
     description: str,
